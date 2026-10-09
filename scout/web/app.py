@@ -1,0 +1,75 @@
+"""The founder's dashboard (spec B11): server-rendered pages over the database the scout writes.
+Forms post and redirect back (303). There is no JavaScript framework and no API surface."""
+
+from __future__ import annotations
+
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+
+from scout.config import Settings
+from scout.web import auth
+from scout.web.deps import page
+from scout.web.pages import (
+    costs,
+    field_checks,
+    gaps,
+    journal,
+    knowledge,
+    pipeline,
+    settings_page,
+    today,
+)
+
+LOCKED = "DASHBOARD_TOKEN is not set; the dashboard is locked."
+
+
+def create_app(settings: Settings, session_factory) -> FastAPI:
+    app = FastAPI(title="Kosovo Gap Scout", docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.settings = settings
+    app.state.session_factory = session_factory
+
+    @app.middleware("http")
+    async def require_login(request: Request, call_next):
+        if request.url.path in auth.OPEN_PATHS:
+            return await call_next(request)
+        if not settings.dashboard_token:
+            return PlainTextResponse(LOCKED, status_code=503)
+        if not auth.is_logged_in(request, settings.dashboard_token):
+            return RedirectResponse("/login", status_code=303)
+        return await call_next(request)
+
+    @app.get("/healthz")
+    def healthz():
+        return PlainTextResponse("ok")
+
+    @app.get("/login", response_class=HTMLResponse)
+    def login_form(request: Request):
+        return page(request, "login.html")
+
+    @app.post("/login")
+    def login(request: Request, token: str = Form("")):
+        expected = settings.dashboard_token
+        if not expected:
+            return PlainTextResponse(LOCKED, status_code=503)
+        if not auth.token_matches(token, expected):
+            return page(request, "login.html", status_code=401, err="Wrong token.")
+        resp = RedirectResponse("/", status_code=303)
+        resp.set_cookie(
+            auth.COOKIE,
+            auth.cookie_value(expected),
+            max_age=auth.MAX_AGE,
+            httponly=True,
+            samesite="lax",
+            secure=auth.is_https(request),
+        )
+        return resp
+
+    @app.post("/logout")
+    def logout():
+        resp = RedirectResponse("/login", status_code=303)
+        resp.delete_cookie(auth.COOKIE)
+        return resp
+
+    for module in (today, gaps, field_checks, pipeline, knowledge, journal, costs, settings_page):
+        app.include_router(module.router)
+    return app
