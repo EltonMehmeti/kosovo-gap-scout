@@ -69,6 +69,31 @@ def test_sixteen_character_token_works(db_session, db_engine, settings):
     assert c.get("/").status_code == 200
 
 
+def test_security_headers_on_every_response(web):
+    for r in (web.get("/"), web.get("/healthz"), web.get("/nope")):
+        assert r.headers["content-security-policy"] == "img-src 'self' data:"
+        assert r.headers["referrer-policy"] == "no-referrer"
+    assert '<meta name="referrer" content="no-referrer">' in web.get("/").text
+
+
+def test_security_headers_also_on_locked_and_login_redirects(db_session, db_engine, settings):
+    for c in (_client(settings, db_engine), _client(settings, db_engine, dashboard_token=None)):
+        r = c.get("/", follow_redirects=False)
+        assert r.headers["referrer-policy"] == "no-referrer"
+        assert r.headers["content-security-policy"] == "img-src 'self' data:"
+
+
+def test_external_image_is_escaped_as_before_and_csp_blocks_loading_it(web, db_session):
+    from datetime import date
+
+    repo.save_brief(
+        db_session, run_id=None, day=date(2026, 10, 9), markdown="![x](https://evil.example/p.png)"
+    )
+    r = web.get("/")
+    assert "evil.example" in r.text
+    assert r.headers["content-security-policy"] == "img-src 'self' data:"
+
+
 def test_today_with_an_empty_database(web):
     r = web.get("/")
     assert r.status_code == 200 and "No brief yet" in r.text

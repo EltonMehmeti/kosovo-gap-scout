@@ -43,6 +43,14 @@ def create_app(settings: Settings, session_factory) -> FastAPI:
             return RedirectResponse("/login", status_code=303)
         return await call_next(request)
 
+    @app.middleware("http")  # registered last, so outermost: covers redirects and 503s too
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        # Brief markdown can embed external images; never fetch them and never send a Referer.
+        response.headers["Content-Security-Policy"] = "img-src 'self' data:"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
     @app.exception_handler(DataError)
     def bad_value(request: Request, exc: DataError):
         # Out-of-range integers and NUL bytes are rejected by Postgres: the caller's mistake, not ours.
