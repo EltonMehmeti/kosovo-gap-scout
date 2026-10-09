@@ -1,0 +1,44 @@
+# Daily scout run on GitHub Actions (free for public repos). Replaces the paid Render cron.
+# Secrets: ANTHROPIC_API_KEY, DATABASE_URL (required); GOOGLE_PLACES_API_KEY, APIFY_TOKEN (optional).
+# Variables (optional, Settings → Secrets and variables → Actions → Variables):
+#   SCOUT_DAILY_BUDGET_EUR (default 1.00; raise to 3.00 on 2026-10-19), SCOUT_PHASE (default foundation).
+name: scout-daily
+
+on:
+  schedule:
+    - cron: "0 6 * * *"  # 06:00 UTC = 07:00 Kosovo in winter, 08:00 in summer; GitHub may start it late
+  workflow_dispatch:      # "Run workflow" button for hand runs
+
+concurrency:
+  group: scout-daily
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+      APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+      SCOUT_PHASE: ${{ vars.SCOUT_PHASE || 'foundation' }}
+      SCOUT_DAILY_BUDGET_EUR: ${{ vars.SCOUT_DAILY_BUDGET_EUR || '1.00' }}
+      SCOUT_TIMEZONE: Europe/Belgrade
+      SCOUT_RUN_MAX_MINUTES: "50"
+      SCOUT_DIRECTOR_REVIEW: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Check secrets
+        run: |
+          test -n "$ANTHROPIC_API_KEY" || { echo "::error::Add the ANTHROPIC_API_KEY repo secret"; exit 1; }
+          test -n "$DATABASE_URL" || { echo "::error::Add the DATABASE_URL repo secret"; exit 1; }
+      - run: uv sync --frozen --no-dev
+      - name: Scout run
+        run: uv run scout run

@@ -1,28 +1,5 @@
+# The daily scout run lives in .github/workflows/scout-daily.yml (free GitHub Actions), not here.
 services:
-  - type: cron
-    name: scout-daily
-    runtime: python
-    plan: starter
-    region: frankfurt
-    schedule: "0 6 * * *"          # 06:00 UTC = 07:00 Kosovo in winter (CET), 08:00 in summer (CEST); brief ready before work
-    buildCommand: pip install uv && uv sync --frozen --no-dev
-    startCommand: uv run scout run
-    envVars:
-      - key: PYTHON_VERSION
-        value: "3.12"
-      - key: ANTHROPIC_API_KEY
-        sync: false
-      - key: DATABASE_URL
-        sync: false
-      - key: GOOGLE_PLACES_API_KEY
-        sync: false
-      - key: APIFY_TOKEN
-        sync: false
-      - key: SCOUT_RUN_MAX_MINUTES
-        value: "50"
-      - key: SCOUT_DIRECTOR_REVIEW
-        value: "true"
-      - fromGroup: scout-shared
   - type: web
     name: scout-dashboard
     runtime: python
@@ -45,8 +22,8 @@ envVarGroups:
     envVars:
       - key: SCOUT_PHASE
         value: foundation
-      # Phase 0 (hand runs, until 2026-10-18) is planned at about €1/day. Raise this to "3.00" on
-      # 2026-10-19, when Foundation (Phase 1) starts.
+      # Shown on the dashboard as today's limit. Keep it equal to the GitHub repo variable
+      # SCOUT_DAILY_BUDGET_EUR that the daily run uses (raise both to "3.00" on 2026-10-19).
       - key: SCOUT_DAILY_BUDGET_EUR
         value: "1.00"
       - key: SCOUT_TIMEZONE

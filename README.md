@@ -20,16 +20,19 @@ Spec: docs/superpowers/specs/2026-10-09-kosovo-gap-scout-design.md
 
 - **Google Play top-free chart (checked 2026-10-09):** `store/apps/collection/topselling_free?gl=XK` now returns a page with no app links. `scout.sources.play` reads `store/apps/top?gl=XK&hl=en` instead. That page lists the top-free chart first, in rank order. It also contains other charts further down, so keep `limit` at 25 or below. Re-check this if `fetch_top_free` starts returning 0 entries.
 
-## Deployment (Render cron + Neon)
-- Blueprint: `render.yaml` (cron `0 6 * * *`, `uv run scout run`).
-- Secrets live only in Render env vars and `.env` (never committed).
-- Database setup runs **from your machine**, not on Render (there is no pre-deploy migration step): put the
+## Deployment (GitHub Actions + Render dashboard + Neon)
+- Daily run: `.github/workflows/scout-daily.yml` (cron `0 6 * * *`, `uv run scout run`), free because the
+  repo is public. GitHub may start it a few minutes late, and disables it after 60 days without commits
+  (it emails first; re-enable it on the Actions tab).
+- Secrets: repo secrets `ANTHROPIC_API_KEY` and `DATABASE_URL` (later `GOOGLE_PLACES_API_KEY`); dashboard
+  env vars live in Render; local ones in `.env` (never committed).
+- Database setup runs **from your machine** (there is no migration step in the workflow): put the
   Neon `DATABASE_URL` in your local `.env`, then run `uv run scout init-db` and `uv run scout seed`. Re-run
   `init-db` locally after pulling a new migration.
-- Hand runs (Phase 0, until 2026-10-18): press **Trigger Run** on the `scout-daily` cron job in the Render
-  dashboard, or run `uv run scout run --budget 1.00` locally against Neon; then read `scout brief`.
-- Budget: `render.yaml` starts at `SCOUT_DAILY_BUDGET_EUR=1.00`; raise it to `3.00` in the Render dashboard on
-  2026-10-19 when Foundation starts.
+- Hand runs: Actions tab → **scout-daily** → **Run workflow**, or `uv run scout run --budget 1.00` locally
+  against Neon; then read `scout brief`.
+- Budget: defaults to `1.00`; on 2026-10-19 set the repo variable `SCOUT_DAILY_BUDGET_EUR=3.00`
+  (Settings → Secrets and variables → Actions → Variables) when Foundation starts.
 - Daily: read the brief (10 min). Sunday: `scout field-check answer <id> "<text>"` for each open check.
 - Phase changes: `scout set-phase verification` (2026-11-16), `scout set-phase maintenance` (2026-12-14).
   A phase set with `scout set-phase` is stored in the database and overrides the `SCOUT_PHASE` env var

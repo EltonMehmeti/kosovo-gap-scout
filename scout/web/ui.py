@@ -11,7 +11,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 DEFAULT_TZ = "Europe/Belgrade"
-CRON_UTC_HOUR = 6  # render.yaml schedules the daily run at "0 6 * * *" (UTC)
+CRON_UTC_HOUR = 6  # .github/workflows/scout-daily.yml runs at "0 6 * * *" (UTC)
 
 
 @dataclass(frozen=True)
