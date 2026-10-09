@@ -253,3 +253,32 @@ class Setting(Base):
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String(80), primary_key=True)
     value: Mapped[dict | None] = mapped_column(JSONType)
+
+
+class Ad(Base):
+    __tablename__ = "ads"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ad_archive_id: Mapped[str] = mapped_column(String(40), unique=True)
+    page_name: Mapped[str] = mapped_column(String(200), default="")
+    page_url: Mapped[str | None] = mapped_column(Text)
+    ad_text: Mapped[str] = mapped_column(Text, default="")
+    platforms: Mapped[list] = mapped_column(JSONType, default=list)
+    first_seen: Mapped[date | None] = mapped_column(Date)
+    last_seen: Mapped[date | None] = mapped_column(Date)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_foreign: Mapped[bool | None] = mapped_column(Boolean)
+    sector_slug: Mapped[str | None] = mapped_column(String(80))
+    gap_id: Mapped[int | None] = mapped_column(ForeignKey("gaps.id"))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    raw: Mapped[dict | None] = mapped_column(JSONType)
+
+
+class SocialCache(Base):
+    __tablename__ = "social_cache"
+    __table_args__ = (UniqueConstraint("source", "query_key", name="ux_social_cache_query"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(20))
+    query_key: Mapped[str] = mapped_column(String(320))
+    items: Mapped[dict] = mapped_column(JSONType, default=dict)
+    cost_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

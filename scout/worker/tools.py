@@ -14,9 +14,18 @@ from sqlalchemy.orm import Session
 
 from scout.db import repo
 from scout.db.repo import CostRecord, FactIn
-from scout.sources import apple, play
+from scout.sources import apple, play, social
+from scout.sources.apify import ADS_ACTOR, INSTAGRAM_ACTOR, ApifyClient, ad_library_url
 from scout.sources.askdata import AskDataClient
+from scout.sources.crawl import (
+    ALLOWED_DOMAINS,
+    CrawlClient,
+    CrawlRefused,
+    allowed_domain,
+    source_for,
+)
 from scout.sources.places import PlacesClient
+from scout.worker import social_guard
 
 FACT_ENTITY_TYPES = (
     "sector",
@@ -29,12 +38,15 @@ FACT_ENTITY_TYPES = (
     "presence_check",
     "demand_test",
     "payment_path",
+    "social",
+    "ad_signal",
 )
 PRESENCE_LEVELS = (
     "absent",
     "exists-but-poor",
     "prishtina-only",
     "offline-only",
+    "instagram-only",
     "decent",
     "unknown",
 )
@@ -64,6 +76,13 @@ TOOL_NAMES = (
     "askdata_table",
     "askdata_fetch",
 )
+SOCIAL_TOOL_NAMES = ("instagram_search", "ad_library_search")
+CRAWL_TOOL_NAMES = ("kosovo_site_crawl",)
+MAX_INSTAGRAM_ACCOUNTS = 30
+MAX_ADS = 50
+SWEEP_MAX_ADS = 300
+SWEEP_RESULT_LIMIT = 12000
+MAX_CRAWL_PAGES = 20
 
 
 @dataclass
@@ -87,6 +106,12 @@ class ToolContext:
     search_note: str | None = (
         None  # set by the worker when the task's web-search allowance is used up
     )
+    apify: ApifyClient | None = None
+    crawler: CrawlClient | None = None
+    apify_monthly_usd: Decimal = Decimal("4.50")
+    social_calls: dict[str, int] = field(default_factory=dict)
+    social_ok: int = 0
+    crawl_pages: int = 0
 
 
 def _clip(text: str, limit: int) -> str:
@@ -235,6 +260,9 @@ def _presence_check(
         value["degraded"] = True
         value["claimed_verdict"] = claimed
         verdict = "unknown"
+        confidence = min(confidence, DEGRADED_CHECK_MAX_CONFIDENCE)
+    if ctx.apify is not None and social_guard.qualifies(ctx) and ctx.social_ok == 0:
+        value["social"] = "partial"
         confidence = min(confidence, DEGRADED_CHECK_MAX_CONFIDENCE)
     value["verdict"] = verdict
     return value, confidence
@@ -438,6 +466,163 @@ def askdata_fetch_impl(ctx: ToolContext, path: str, selections_json: str) -> str
     return _clip("\n".join(lines), SOURCE_RESULT_LIMIT)
 
 
+# ---------- social and Kosovo sites ----------
+
+
+def instagram_search_impl(ctx: ToolContext, query: str) -> str:
+    if ctx.apify is None:
+        return "instagram_search unavailable (no APIFY_TOKEN configured) — use web_search instead"
+    query = query.strip()
+    if not query:
+        return "error: query is empty"
+    actor_input = {
+        "search": query,
+        "searchType": "user",
+        "searchLimit": MAX_INSTAGRAM_ACCOUNTS,
+        "resultsType": "details",
+        "resultsLimit": MAX_INSTAGRAM_ACCOUNTS,
+    }
+    out = social_guard.paid_call(
+        ctx,
+        "instagram",
+        query,
+        max_items=MAX_INSTAGRAM_ACCOUNTS,
+        run=lambda n: ctx.apify.run(INSTAGRAM_ACTOR, actor_input, max_items=n),
+        normalise=social.instagram_summary,
+    )
+    if isinstance(out, str):
+        return out
+    shops, q = out["shops"], out["questions"]
+    gap_id = ctx.payload.get("gap_id")
+    if gap_id is not None:
+        repo.upsert_fact(
+            ctx.session,
+            FactIn(
+                claim=f"Instagram search {query[:100]!r}: {len(shops)} business accounts in results",
+                entity_type="social",
+                entity_key=f"gap:{gap_id}",
+                confidence=0.7,
+                sector_slug=_or_none(ctx.payload.get("sector") or ""),
+                value={"query": query, **out},
+                ttl_days=30,
+                source_name="apify-instagram",
+            ),
+            run_id=ctx.run_id,
+            observed_at=ctx.now,
+        )
+        ctx.touched_gap_ids.add(int(gap_id))
+    lines = [
+        f"{len(shops)} Instagram business accounts for {query!r}",
+        f"comment questions: price {q['price']}, delivery {q['delivery']}, where to buy {q['where']}",
+    ]
+    lines += [
+        f"- @{s['username']} {s['name']} | {s['followers']} followers | {s['category'] or '-'} | "
+        f"last post {s['last_post'] or '-'}"
+        for s in shops
+    ]
+    return _clip("\n".join(lines), SOURCE_RESULT_LIMIT)
+
+
+def ad_library_search_impl(ctx: ToolContext, query: str = "") -> str:
+    if ctx.apify is None:
+        return "ad_library_search unavailable (no APIFY_TOKEN configured) — use web_search instead"
+    sweep = ctx.profile == social_guard.ADS_SWEEP_PROFILE
+    query = query.strip()
+    if not query and not sweep:
+        return "error: query is empty"
+    limit = SWEEP_MAX_ADS if sweep else MAX_ADS
+    actor_input = {
+        "startUrls": [{"url": ad_library_url(query)}],
+        "resultsLimit": limit,
+        "isDetailsPerAd": False,
+    }
+    out = social_guard.paid_call(
+        ctx,
+        "ads",
+        query,
+        max_items=limit,
+        run=lambda n: ctx.apify.run(ADS_ACTOR, actor_input, max_items=n),
+        normalise=lambda items: social.ads_summary(items, today=ctx.guard.day),
+    )
+    if isinstance(out, str):
+        return out
+    ads = out["ads"]
+    gap_id = ctx.payload.get("gap_id")
+    sector = _or_none(ctx.payload.get("sector") or "")
+    repo.upsert_ads(
+        ctx.session,
+        ads,
+        gap_id=int(gap_id) if gap_id is not None else None,
+        sector_slug=sector,
+        now=ctx.now,
+    )
+    head = (
+        f"{out['count']} Meta ads shown in Kosovo for {query[:100] or 'all advertisers'!r}: "
+        f"{out['foreign']} foreign sellers, {out['long_running']} running 30+ days"
+    )
+    if gap_id is not None and not sweep:
+        repo.upsert_fact(
+            ctx.session,
+            FactIn(
+                claim=head,
+                entity_type="ad_signal",
+                entity_key=f"gap:{gap_id}",
+                confidence=0.7,
+                sector_slug=sector,
+                value={k: out[k] for k in ("count", "foreign", "long_running")} | {"query": query},
+                ttl_days=14,
+                source_name="meta-ad-library",
+            ),
+            run_id=ctx.run_id,
+            observed_at=ctx.now,
+        )
+        ctx.touched_gap_ids.add(int(gap_id))
+
+    def origin(a: dict) -> str:
+        return {True: "foreign", False: "local"}.get(a["is_foreign"], "?")
+
+    lines = [head]
+    if sweep:
+        by_page: dict[str, list[dict]] = {}
+        for a in ads:
+            by_page.setdefault(a["page_name"] or "?", []).append(a)
+        lines += [
+            f"- {page} | {len(group)} ads | {origin(group[0])} | "
+            f"{sum(1 for a in group if a['long_running'])} running 30+ days | "
+            f"{group[0]['ad_text'][:80]}"
+            for page, group in sorted(by_page.items(), key=lambda kv: -len(kv[1]))
+        ]
+    else:
+        lines += [
+            f"- {a['page_name']} | {origin(a)} | since {a['first_seen'] or '?'} | "
+            f"{a['ad_text'][:100]}"
+            for a in ads
+        ]
+    return _clip("\n".join(lines), SWEEP_RESULT_LIMIT if sweep else SOURCE_RESULT_LIMIT)
+
+
+def kosovo_site_crawl_impl(ctx: ToolContext, url: str) -> str:
+    if ctx.crawler is None:
+        return "kosovo_site_crawl unavailable (Crawl4AI is not installed) — use web_fetch instead"
+    domain = allowed_domain(url)
+    if domain is None:
+        return f"error: only these sites can be crawled: {', '.join(ALLOWED_DOMAINS)}"
+    if ctx.crawl_pages >= MAX_CRAWL_PAGES:
+        return f"crawl limit reached for this task ({MAX_CRAWL_PAGES} pages) — use what you have"
+    ctx.crawl_pages += 1
+    source = source_for(domain)
+    try:
+        text = ctx.crawler.fetch(url)
+    except CrawlRefused as e:
+        repo.mark_source(ctx.session, source, ok=False, now=ctx.now)
+        return f"page skipped: {e}"
+    except Exception as e:  # noqa: BLE001 — a dead site must not kill the task
+        repo.mark_source(ctx.session, source, ok=False, now=ctx.now)
+        return f"page skipped: {type(e).__name__}"
+    repo.mark_source(ctx.session, source, ok=True, now=ctx.now)
+    return _clip(text.strip() or "(empty page)", SOURCE_RESULT_LIMIT)
+
+
 # ---------- tool objects ----------
 
 
@@ -594,8 +779,8 @@ def build_tools(ctx: ToolContext) -> list:
             title: Short name, e.g. "Pet sitting marketplace".
             sector: Sector slug.
             hypothesis: Who in Kosovo would pay, for what, and the evidence so far.
-            presence_level: absent, exists-but-poor, prishtina-only, offline-only, decent or unknown — say
-                "unknown" unless you ran a presence check.
+            presence_level: absent, exists-but-poor, prishtina-only, offline-only, instagram-only, decent
+                or unknown — say "unknown" unless you ran a presence check.
             proven_model_slug: Slug of the proven model it copies, if recorded.
             why_not_yet: The best reason nobody has done it (payments, trust, size, regulation, logistics).
         """
@@ -679,7 +864,41 @@ def build_tools(ctx: ToolContext) -> list:
             ctx, "askdata_fetch", askdata_fetch_impl, path=path, selections_json=selections_json
         )
 
-    return [
+    @beta_tool
+    def instagram_search(query: str) -> str:
+        """Find Instagram business accounts in Kosovo by keyword (paid; one call per task; only while
+        checking a gap that scores 60+). Returns public business accounts with followers and last post
+        date, plus counts of comments asking about price, delivery or where to buy.
+
+        Args:
+            query: The word local sellers use, found first with web_search site:instagram.com, e.g.
+                "torta prishtine" or "lule ferizaj".
+        """
+        return _run(ctx, "instagram_search", instagram_search_impl, query=query)
+
+    @beta_tool
+    def ad_library_search(query: str = "") -> str:
+        """Search the public Meta Ad Library for ads shown in Kosovo (paid; one call per task). Shows who
+        pays to sell this, whether the seller is local or foreign, and how long each ad has run.
+
+        Args:
+            query: Words a seller would put in the ad, in Albanian, e.g. "dërgesa falas torta". Leave
+                empty only in the weekly ads sweep.
+        """
+        return _run(ctx, "ad_library_search", ad_library_search_impl, query=query)
+
+    @beta_tool
+    def kosovo_site_crawl(url: str) -> str:
+        """Read one page of an allowlisted Kosovo site as Markdown (free; up to 20 pages per task):
+        merrjep.com, gjirafa50.com, kosovajob.com, telegrafi.com, koha.net, kallxo.com,
+        prishtinainsight.com, arbk.rks-gov.net. Use it for listings, prices and job ads.
+
+        Args:
+            url: Full https URL on one of those sites, e.g. a Merrjep search results page.
+        """
+        return _run(ctx, "kosovo_site_crawl", kosovo_site_crawl_impl, url=url)
+
+    tools = [
         kb_search,
         kb_record_fact,
         kb_record_business,
@@ -692,3 +911,8 @@ def build_tools(ctx: ToolContext) -> list:
         askdata_table,
         askdata_fetch,
     ]
+    if ctx.apify is not None:
+        tools += [instagram_search, ad_library_search]
+    if ctx.crawler is not None:
+        tools.append(kosovo_site_crawl)
+    return tools

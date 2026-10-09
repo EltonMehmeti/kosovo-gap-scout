@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     daily_budget_eur: Decimal = Decimal("3.00")
     run_max_minutes: int = 50
     usd_to_eur: Decimal = Decimal("0.92")
+    apify_monthly_usd: Decimal = Decimal("4.50")
     timezone: str = "Europe/Belgrade"
     director_review: bool = True
 

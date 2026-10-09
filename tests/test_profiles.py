@@ -16,6 +16,7 @@ def test_profiles_match_spec_table():
         "culture",
         "news-scan",
         "deep-dive",
+        "ads-sweep",
     }
     ms = P.PROFILES["map-sector"]
     assert (ms.model, ms.max_searches, ms.max_fetches, ms.max_iterations, ms.est_cost_eur) == (
@@ -124,3 +125,15 @@ def test_research_turns_have_room_to_think_search_and_save():
     for name in ("map-sector", "hunt-models", "verify-gap", "culture", "deep-dive"):
         assert PROFILES[name].max_tokens >= 16000, name
     assert PROFILES["news-scan"].max_tokens >= 8000
+
+
+def test_ads_sweep_profile_and_verify_social_step():
+    sweep = P.build_brief(P.PROFILES["ads-sweep"], {}, date(2026, 10, 19))
+    assert "ad_library_search once with an empty query" in sweep
+    assert '{"advertisers": n' in sweep
+    verify = P.build_brief(
+        P.PROFILES["verify-gap"],
+        {"gap_id": 3, "gap_title": "Cakes", "sector": "food"},
+        date(2026, 10, 19),
+    )
+    assert "instagram_search" in verify and "instagram-only" in verify

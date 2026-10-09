@@ -7,7 +7,13 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 PresenceLevel = Literal[
-    "absent", "exists-but-poor", "prishtina-only", "offline-only", "decent", "unknown"
+    "absent",
+    "exists-but-poor",
+    "prishtina-only",
+    "offline-only",
+    "instagram-only",
+    "decent",
+    "unknown",
 ]
 HardFilter = Literal[
     "none",

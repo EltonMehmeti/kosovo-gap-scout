@@ -27,3 +27,9 @@ def test_env_accepts_percent_encoded_password_offline(percent_url, capsys):
     out = capsys.readouterr().out
     assert "CREATE TABLE gaps" in out
     assert cfg.get_main_option("sqlalchemy.url").endswith("p%40ss%25w0rd@db.example:5432/scout")
+
+
+def test_social_tables_are_in_the_migrations(percent_url, capsys):
+    command.upgrade(Config(str(ROOT / "alembic.ini")), "head", sql=True)
+    out = capsys.readouterr().out
+    assert "CREATE TABLE ads" in out and "CREATE TABLE social_cache" in out

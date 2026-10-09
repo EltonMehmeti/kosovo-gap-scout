@@ -23,6 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.5"]
+crawl = ["crawl4ai>=0.6"]
 
 [project.scripts]
 scout = "scout.cli:app"

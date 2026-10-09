@@ -112,20 +112,29 @@ Run the presence-check protocol completely — this is the anti-hallucination ru
 2. app_store_search for the service keywords (store "both").
 3. Web: three Albanian queries ("<service> në Kosovë", "<service> Prishtinë", "aplikacion <service>") and one
    English query. Look for digital products, not just listings.
-4. Save every player found with kb_record_business (kind local or foreign).
-5. Save exactly one presence-check fact: kb_record_fact with entity_type "presence_check", entity_key
+4. Social (Kosovo sells through Instagram and Facebook): run web_search with site:instagram.com,
+   site:facebook.com and site:tiktok.com queries for the service in Albanian with a city name, to learn
+   the words and page names local sellers use. Then, if these tools are offered: one instagram_search with
+   the best keyword, one ad_library_search with the words a seller would put in an ad, and
+   kosovo_site_crawl on Merrjep or KosovaJob pages with listings or prices. Paid social tools may refuse
+   (score below 60, credit used up): then carry on without them. Ads (above all ones running 30+ days and
+   foreign sellers shipping into Kosovo) and comment questions about price or delivery are demand
+   evidence; the tools save them for this gap.
+5. Save every player found with kb_record_business (kind local or foreign).
+6. Save exactly one presence-check fact: kb_record_fact with entity_type "presence_check", entity_key
    "gap:{gap_id}", claim "presence check: <verdict> — <one-line counts>", ttl_days 60, confidence 0.8 (0.5 if
    a source was degraded), value_json {{"verdict": "...", "places_by_city": {{...}}, "apps": [...],
    "web_hits": [...], "urls": [...]}}. Verdicts: absent (nothing in any channel), exists-but-poor (≤ 2 players,
    weak reviews or activity, or social-media-only), prishtina-only, offline-only (businesses exist but no
-   digital product), decent (≥ 3 active players with digital products), unknown (sources degraded).
+   digital product), instagram-only (sellers exist only as informal Instagram or Facebook pages, no shop or
+   app), decent (≥ 3 active players with digital products), unknown (sources degraded).
    The system accepts this fact only after your searches in steps 1–2 and stores "unknown" if fewer than
    seven Places searches or no app-store search actually ran.
-6. Save a payment_path fact with entity_key "gap:{gap_id}" (how a Kosovo customer could pay for this: card
+7. Save a payment_path fact with entity_key "gap:{gap_id}" (how a Kosovo customer could pay for this: card
    via local PSP, cash on delivery, bank transfer, in-app via Google/Apple billing) and the strongest
    why-not-yet facts. Make sure the gap's proven model is recorded (kb_record_proven_model) with a source
    URL for each market — the system only counts cited markets as proof.
-7. Call kb_propose_gap with the same title "{gap_title}", sector `{sector}`, presence_level set to the
+8. Call kb_propose_gap with the same title "{gap_title}", sector `{sector}`, presence_level set to the
    verdict, and the updated hypothesis and why_not_yet — this updates the existing gap.
 If the verdict is ambiguous, include one line "field-check: <a question the founder can answer in three
 minutes by phone or by visiting>" in your summary.
@@ -202,6 +211,27 @@ Known facts about this gap:
 Recent journal:
 {journal_md}"""
 
+ADS_SWEEP_BRIEF = """Date: {today}. Task: WEEKLY ADS SWEEP of the Meta Ad Library for Kosovo.
+
+Goal: learn which consumer businesses pay to advertise to people in Kosovo this week, and spot foreign
+sellers serving Kosovo with no local equivalent.
+Do, in order:
+1. Call ad_library_search once with an empty query (all ads shown in Kosovo, up to 300). You get one call.
+2. Group the ads by sector (use the existing sector slugs; kb_search if unsure). For each sector with
+   ads, note how many advertisers there are, which ads run 30+ days (a sign they pay off), and which
+   sellers are foreign and ship into Kosovo.
+3. Save one fact per sector with kb_record_fact: entity_type "ad_signal", entity_key the sector slug,
+   sector set, ttl_days 14, value_json {{"advertisers": n, "long_running": n, "foreign": n,
+   "examples": ["page name", ...]}}.
+4. When foreign sellers serve a need that no Kosovo business serves, propose it with kb_propose_gap
+   (presence_level "unknown").
+Businesses only: never record people.
+
+Recent journal:
+{journal_md}
+
+{contract}"""
+
 
 @dataclass(frozen=True)
 class Profile:
@@ -245,7 +275,7 @@ PROFILES: dict[str, Profile] = {
         "verify-gap",
         "claude-sonnet-5-5",
         Decimal("0.40"),
-        14,
+        18,
         10,
         6,
         16000,
@@ -260,6 +290,9 @@ PROFILES: dict[str, Profile] = {
     ),
     "deep-dive": Profile(
         "deep-dive", "claude-opus-5-5", Decimal("0.80"), 10, 8, 6, 16000, "high", DEEP_DIVE_BRIEF
+    ),
+    "ads-sweep": Profile(
+        "ads-sweep", "claude-sonnet-5-5", Decimal("0.20"), 8, 2, 2, 16000, "medium", ADS_SWEEP_BRIEF
     ),
 }
 

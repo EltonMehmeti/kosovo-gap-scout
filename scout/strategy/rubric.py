@@ -10,6 +10,7 @@ PRESENCE_CAP: dict[str, int] = {
     "exists-but-poor": 18,
     "prishtina-only": 12,
     "offline-only": 10,
+    "instagram-only": 18,
     "decent": 0,
     "unknown": 12,
 }
@@ -27,7 +28,7 @@ RUBRIC_TEXT = """Scoring rubric (0–100). You propose component scores; the sys
 - proof (0–25): evidence the model works elsewhere. Count nearby markets (AL MK ME BA RS HR SI) three times,
   EU/US once; 25 means several nearby markets with traction evidence.
 - absence (0–25): how missing it is in Kosovo. Cap by presence level: absent 25, exists-but-poor 18,
-  prishtina-only 12, offline-only 10, decent 0, unknown 12. Without a presence check younger than 60 days
+  prishtina-only 12, offline-only 10, instagram-only 18, decent 0, unknown 12. Without a presence check younger than 60 days
   the system caps absence at 12 and confidence at 0.5 regardless of what you propose.
 - demand (0–20): signals Kosovars want it (complaints, searches, Instagram workarounds, diaspora pull,
   statistics on spend).

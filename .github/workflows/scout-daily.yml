@@ -1,7 +1,8 @@
 # Daily scout run on GitHub Actions (free for public repos). Replaces the paid Render cron.
 # Secrets: ANTHROPIC_API_KEY, DATABASE_URL (required); GOOGLE_PLACES_API_KEY, APIFY_TOKEN (optional).
 # Variables (optional, Settings → Secrets and variables → Actions → Variables):
-#   SCOUT_DAILY_BUDGET_EUR (default 1.00; raise to 3.00 on 2026-10-19), SCOUT_PHASE (default foundation).
+#   SCOUT_DAILY_BUDGET_EUR (default 1.00; raise to 3.00 on 2026-10-19), SCOUT_PHASE (default foundation),
+#   SCOUT_APIFY_MONTHLY_USD (default 4.50).
 name: scout-daily
 
 on:
@@ -27,6 +28,7 @@ jobs:
       APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
       SCOUT_PHASE: ${{ vars.SCOUT_PHASE || 'foundation' }}
       SCOUT_DAILY_BUDGET_EUR: ${{ vars.SCOUT_DAILY_BUDGET_EUR || '1.00' }}
+      SCOUT_APIFY_MONTHLY_USD: ${{ vars.SCOUT_APIFY_MONTHLY_USD || '4.50' }}
       SCOUT_TIMEZONE: Europe/Belgrade
       SCOUT_RUN_MAX_MINUTES: "50"
       SCOUT_DIRECTOR_REVIEW: "true"
@@ -39,6 +41,13 @@ jobs:
         run: |
           test -n "$ANTHROPIC_API_KEY" || { echo "::error::Add the ANTHROPIC_API_KEY repo secret"; exit 1; }
           test -n "$DATABASE_URL" || { echo "::error::Add the DATABASE_URL repo secret"; exit 1; }
-      - run: uv sync --frozen --no-dev
+      - run: uv sync --frozen --no-dev --extra crawl
+      - name: Cache Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+      - name: Install Chromium for Crawl4AI
+        run: uv run playwright install --with-deps chromium
       - name: Scout run
         run: uv run scout run

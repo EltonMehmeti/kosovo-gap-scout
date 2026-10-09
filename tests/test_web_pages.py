@@ -111,3 +111,22 @@ def test_login_and_error_pages_have_no_inline_handlers(web, db_session, db_engin
 
 def test_the_old_gap_actions_partial_is_gone():
     assert not (deps.STATIC_DIR.parent / "templates" / "_gap_actions.html").exists()
+
+
+def test_costs_page_shows_social_credit(web, db_session):
+    from datetime import UTC, datetime
+    from decimal import Decimal
+    from zoneinfo import ZoneInfo
+
+    from scout.db import repo
+    from scout.db.repo import CostRecord
+
+    today = datetime.now(UTC).astimezone(ZoneInfo("Europe/Belgrade")).date()
+    repo.record_cost(
+        db_session,
+        CostRecord("apify", "apify", "ads", {"usd": "1.25"}, Decimal("0")),
+        day=today,
+        run_id=None,
+    )
+    html = web.get("/costs").text
+    assert "Social credit" in html and "$1.25" in html and "$4.50" in html

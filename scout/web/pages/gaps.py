@@ -55,6 +55,19 @@ def gap_detail(gap_id: int, request: Request, session: Session = Depends(get_ses
     ).all()
     model = session.get(ProvenModel, gap.proven_model_id) if gap.proven_model_id else None
     sector = next((s for s in repo.list_sectors(session) if s.id == gap.sector_id), None)
+    social = repo.social_facts_for_gap(session, gap_id, now=datetime.now(UTC))
+    shops: dict[str, dict] = {}
+    questions = {"price": 0, "delivery": 0, "where": 0}
+    for f in social:
+        value = f.value if isinstance(f.value, dict) else {}
+        raw_shops = value.get("shops")
+        for s in raw_shops if isinstance(raw_shops, list) else []:
+            if isinstance(s, dict) and s.get("username"):
+                shops.setdefault(str(s["username"]), s)
+        raw_questions = value.get("questions")
+        for k, n in (raw_questions if isinstance(raw_questions, dict) else {}).items():
+            if k in questions and isinstance(n, int) and not isinstance(n, bool):
+                questions[k] += n
     return page(
         request,
         "gap.html",
@@ -65,6 +78,9 @@ def gap_detail(gap_id: int, request: Request, session: Session = Depends(get_ses
         checks=checks,
         is_finalist=gap.id in founder.finalists(session),
         is_flagged=gap.id in founder.flagged(session),
+        shops=list(shops.values()),
+        ads=repo.ads_for_gap(session, gap_id),
+        questions=questions if any(questions.values()) else None,
     )
 
 

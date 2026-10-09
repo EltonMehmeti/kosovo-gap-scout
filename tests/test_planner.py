@@ -138,3 +138,10 @@ def test_extra_flagged_gaps_use_the_regular_verify_slots_outside_maintenance():
     tasks = P.plan_tasks(_state(gaps=gaps, flagged_gap_ids=[4, 5, 6]), "verification")
     verify = [(t.payload["gap_id"], t.priority) for t in tasks if t.profile == "verify-gap"]
     assert verify[0] == (4, 90) and len(verify) == 3  # 1 flagged slot + 2 regular slots
+
+
+def test_ads_sweep_only_on_monday_with_a_token():
+    assert "ads-sweep" in _profiles(P.plan_tasks(_state(social_enabled=True), "foundation"))
+    assert "ads-sweep" not in _profiles(P.plan_tasks(_state(), "foundation"))
+    tuesday = _state(social_enabled=True, today=MONDAY + timedelta(days=1))
+    assert "ads-sweep" not in _profiles(P.plan_tasks(tuesday, "foundation"))

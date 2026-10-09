@@ -45,6 +45,7 @@ PRIORITY = {
     "map-sector": 80,
     "hunt-models": 75,
     "chart-diff": 70,
+    "ads-sweep": 65,
     "news-scan": 60,
     "culture": 55,
     "deep-dive": 40,
@@ -84,6 +85,7 @@ class PlannerState:
     flagged_gap_ids: list[int] = field(default_factory=list)
     deep_dive_done_this_month: bool = False
     done_today: set[tuple[str, str]] = field(default_factory=set)
+    social_enabled: bool = False
 
 
 @dataclass
@@ -196,6 +198,8 @@ def plan_tasks(state: PlannerState, phase: str) -> list[PlannedTask]:
     # weekly and daily fixtures
     if weekday == 0:
         add("chart-diff", {}, est=CHART_DIFF_EST)
+        if state.social_enabled:
+            add("ads-sweep", {})
     add("news-scan", {})
     if rules["culture"] and state.culture_themes_missing:
         theme = sorted(state.culture_themes_missing)[0]
@@ -223,7 +227,13 @@ def plan_tasks(state: PlannerState, phase: str) -> list[PlannedTask]:
 
 
 def load_state(
-    session, *, today: date, now: datetime, cap: Decimal, run_ids_today: list[int]
+    session,
+    *,
+    today: date,
+    now: datetime,
+    cap: Decimal,
+    run_ids_today: list[int],
+    social_enabled: bool = False,
 ) -> PlannerState:
     from scout.seeds import CULTURE_THEMES
 
@@ -267,4 +277,5 @@ def load_state(
         flagged_gap_ids=list(repo.get_setting(session, "flagged_gaps", []) or []),
         deep_dive_done_this_month=deep_done,
         done_today=done_today,
+        social_enabled=social_enabled,
     )

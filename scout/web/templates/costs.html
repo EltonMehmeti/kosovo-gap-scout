@@ -18,6 +18,7 @@
   <section class="card">
     <h2>{{ ui.icon("trending-up") }} Spend</h2>
     <p>Today <strong>{{ spent_today | eur }}</strong> · This month <strong>{{ spent_month | eur }}</strong></p>
+    <p>Social credit <strong>${{ "%.2f" | format(apify_used) }}</strong> of ${{ "%.2f" | format(apify_cap) }} used this month <span class="muted">(Apify free plan)</span></p>
     <div class="bars" role="img" aria-label="Spend per day over the last 14 days">
       {% for d, cost in bars %}
       <div class="bar-col{{ ' today' if d == day }}" title="{{ d | iso }}: {{ cost | eur }}">

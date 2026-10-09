@@ -72,6 +72,7 @@ PROFILE_NAMES = {
     "news-scan": "News scan",
     "deep-dive": "Deep dive",
     "chart-diff": "App chart comparison",
+    "ads-sweep": "Weekly ads sweep",
 }
 PRESENCE = {
     "absent": "Not in Kosovo",
@@ -79,6 +80,7 @@ PRESENCE = {
     "prishtina-only": "Only in Prishtina",
     "offline-only": "Offline only",
     "decent": "Already done well",
+    "instagram-only": "Only on Instagram (informal)",
     "unknown": "Not checked yet",
 }
 OPEN_GAP_STATUSES = ("candidate", "verifying", "verified")

@@ -190,3 +190,36 @@ def test_quiet_day_line_reports_failures_and_chart_errors():
     assert B.render_brief(_quiet_inputs(["done", "failed"], ["xk apple: timeout"])) == (
         "Quiet day — 2 tasks, €0.40, nothing moved; 1 failed; 1 chart errors."
     )
+
+
+def _social_inputs(usd, cap, fresh):
+    from types import SimpleNamespace
+
+    return B.BriefInputs(
+        run=SimpleNamespace(),
+        today=date(2026, 10, 19),
+        changes=[],
+        fresh_facts=fresh,
+        field_checks=[],
+        tasks=[],
+        chart_errors=[],
+        spent_today=Decimal("0"),
+        spent_mtd=Decimal("0"),
+        cap=Decimal("1"),
+        places_calls=0,
+        apify_usd=Decimal(usd),
+        apify_cap_usd=cap,
+    )
+
+
+def test_social_credit_lines():
+    from types import SimpleNamespace
+
+    fact = SimpleNamespace(confidence=0.8, claim="c", source_url=None, source_name="web")
+    md = B.render_brief(_social_inputs("1.20", Decimal("4.50"), [fact]))
+    assert "Social credit: $1.20 of $4.50 this month" in md and "used up" not in md
+    md = B.render_brief(_social_inputs("4.50", Decimal("4.50"), [fact]))
+    assert "Social credit used up for October — paid social checks resume Nov 1." in md
+    quiet = B.render_brief(_social_inputs("4.60", Decimal("4.50"), []))
+    assert quiet.startswith("Quiet day") and quiet.endswith("resume Nov 1.")
+    assert "Social credit" not in B.render_brief(_social_inputs("0", None, [fact]))

@@ -58,6 +58,8 @@ def costs_page(request: Request, session: Session = Depends(get_session)):
         request,
         "costs.html",
         day=day,
+        apify_used=repo.apify_usd_in_month(session, day),
+        apify_cap=Decimal(settings.apify_monthly_usd),
         spent_today=repo.spent_on(session, day),
         spent_month=repo.spent_between(session, month_start, day),
         cap=founder.effective_cap(session, settings, phase, day),

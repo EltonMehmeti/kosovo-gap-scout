@@ -59,6 +59,37 @@
       <p class="muted">Confidence {{ gap.confidence | pct }}</p>
     </section>
     <section class="card">
+      <h2>{{ ui.icon("sparkles") }} Social</h2>
+      {% if shops or ads or questions %}
+        {% if shops %}
+        <h3>Instagram shops</h3>
+        <ul class="list">
+          {% for s in shops %}
+          <li><div class="grow"><strong>{{ s.name or s.username }}</strong>
+            <div class="muted">@{{ s.username }} · {{ s.followers or 0 }} followers{% if s.last_post %} · last post {{ s.last_post }}{% endif %}</div>
+          </div></li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% if ads %}
+        <h3>Ads shown in Kosovo</h3>
+        <ul class="list">
+          {% for a in ads %}
+          <li><div class="grow"><strong>{{ a.page_name or "Unknown advertiser" }}</strong>
+            {% if a.is_foreign %}{{ ui.chip("Foreign seller", "amber") }}{% elif a.is_foreign == false %}{{ ui.chip("Local seller", "blue") }}{% else %}{{ ui.chip("Seller origin unknown") }}{% endif %}
+            <div class="muted">Running since {{ ui.date(a.first_seen) }}{% if not a.is_active %} · stopped{% endif %}</div>
+          </div></li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% if questions %}
+        <p class="muted">People asked in comments: price {{ questions.price }} · delivery {{ questions.delivery }} · where to buy {{ questions.where }}</p>
+        {% endif %}
+      {% else %}
+      <p class="muted">No social checks for this gap yet.</p>
+      {% endif %}
+    </section>
+    <section class="card">
       <h2>{{ ui.icon("message-circle-question") }} Field checks</h2>
       {% if checks %}
       <ul class="list">

@@ -23,7 +23,9 @@ from scout.extract.extractor import Extractor
 from scout.founder import effective_cap
 from scout.llm.gateway import LLM, LLMError
 from scout.sources import apple, play
+from scout.sources.apify import ApifyClient
 from scout.sources.askdata import AskDataClient
+from scout.sources.crawl import CrawlClient, crawl_available
 from scout.sources.places import PlacesClient
 from scout.strategy.schemas import CriticOutput, DirectorReview
 from scout.strategy.strategist import Strategist, changes_today
@@ -148,6 +150,8 @@ def run_once(
     client=None,
     session_factory=None,
     places: PlacesClient | None = None,
+    apify: ApifyClient | None = None,
+    crawler: CrawlClient | None = None,
     askdata: AskDataClient | None = None,
     apple_fetch=apple.fetch_top_free,
     play_fetch=play.fetch_top_free,
@@ -167,6 +171,10 @@ def run_once(
     askdata = askdata or AskDataClient()
     if places is None and settings.google_places_api_key:
         places = PlacesClient(settings.google_places_api_key)
+    if apify is None and settings.apify_token:
+        apify = ApifyClient(settings.apify_token)
+    if crawler is None and crawl_available():
+        crawler = CrawlClient()
     session = session_factory()
     run_id: int | None = None
     progress: dict = {"task_id": None, "done": 0, "failed": 0}
@@ -196,6 +204,8 @@ def run_once(
             dry_run=dry_run,
             client=client,
             places=places,
+            apify=apify,
+            crawler=crawler,
             askdata=askdata,
             apple_fetch=apple_fetch,
             play_fetch=play_fetch,
@@ -265,6 +275,8 @@ def _run_body(
     dry_run,
     client,
     places,
+    apify,
+    crawler,
     askdata,
     apple_fetch,
     play_fetch,
@@ -287,7 +299,14 @@ def _run_body(
 
     if dry_run:  # a dry run never writes beyond its own runs row, even on a capped day
         earlier_runs = [r.id for r in repo.runs_on_day(session, today) if r.id != run.id]
-        state = load_state(session, today=today, now=now, cap=cap, run_ids_today=earlier_runs)
+        state = load_state(
+            session,
+            today=today,
+            now=now,
+            cap=cap,
+            run_ids_today=earlier_runs,
+            social_enabled=apify is not None,
+        )
         queued = repo.queued_tasks(session)
         keys = {_key(t.profile, t.payload or {}) for t in queued}
         extra = [p for p in plan_tasks(state, phase) if _key(p.profile, p.payload) not in keys]
@@ -317,7 +336,14 @@ def _run_body(
             notes.append(f"released {released} stale running task(s)")
         # 1. plan
         earlier_runs = [r.id for r in repo.runs_on_day(session, today) if r.id != run.id]
-        state = load_state(session, today=today, now=now, cap=cap, run_ids_today=earlier_runs)
+        state = load_state(
+            session,
+            today=today,
+            now=now,
+            cap=cap,
+            run_ids_today=earlier_runs,
+            social_enabled=apify is not None,
+        )
         queued_before = repo.queued_tasks(session)
         for t in queued_before:  # tasks added by hand or by field-check answers join today's run
             t.run_id = run.id
@@ -410,6 +436,9 @@ def _run_body(
                         askdata=askdata,
                         profile=task.profile,
                         payload=payload,
+                        apify=apify,
+                        crawler=crawler,
+                        apify_monthly_usd=Decimal(settings.apify_monthly_usd),
                     )
                     contexts.append(ctx)  # even a failed task may have touched gaps
                     outcome = worker.run(task.id, profile, brief, ctx)
@@ -501,7 +530,14 @@ def _run_body(
 
     # 4. write and remember
     brief_md = write_brief(
-        session, llm, run, today=today, now=clock(), changes=changes, chart_report=chart_report
+        session,
+        llm,
+        run,
+        today=today,
+        now=clock(),
+        changes=changes,
+        chart_report=chart_report,
+        apify_cap_usd=Decimal(settings.apify_monthly_usd) if apify is not None else None,
     )
     spent = guard.spent()  # after the brief so its narrative cost is included
     tasks = repo.tasks_for_run(session, run.id)

@@ -13,6 +13,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from scout.db.models import (
+    Ad,
     AppChartSnapshot,
     Brief,
     Business,
@@ -27,6 +28,8 @@ from scout.db.models import (
     Scorecard,
     Sector,
     Setting,
+    SocialCache,
+    Source,
     Task,
 )
 
@@ -605,6 +608,116 @@ def places_calls_in_month(session: Session, day: date) -> int:
         select(Cost).where(Cost.kind == "places", Cost.day >= start, Cost.day <= day)
     )
     return sum(int((c.units or {}).get("calls", 1)) for c in rows)
+
+
+def apify_usd_in_month(session: Session, day: date) -> Decimal:
+    start = day.replace(day=1)
+    rows = session.scalars(
+        select(Cost).where(Cost.kind == "apify", Cost.day >= start, Cost.day <= day)
+    )
+    return sum((Decimal(str((c.units or {}).get("usd", "0"))) for c in rows), Decimal("0"))
+
+
+def get_social_cache(
+    session: Session, source: str, query_key: str, *, now: datetime, max_age_days: int
+) -> SocialCache | None:
+    row = session.scalars(
+        select(SocialCache).where(SocialCache.source == source, SocialCache.query_key == query_key)
+    ).first()
+    if row is None or row.fetched_at <= now - timedelta(days=max_age_days):
+        return None
+    return row
+
+
+def put_social_cache(
+    session: Session,
+    source: str,
+    query_key: str,
+    items: dict,
+    *,
+    cost_usd: Decimal,
+    now: datetime,
+) -> SocialCache:
+    row = session.scalars(
+        select(SocialCache).where(SocialCache.source == source, SocialCache.query_key == query_key)
+    ).first()
+    if row is None:
+        row = SocialCache(source=source, query_key=query_key)
+        session.add(row)
+    row.items, row.cost_usd, row.fetched_at = items, cost_usd, now
+    session.commit()
+    return row
+
+
+def _iso_date(value: str | None) -> date | None:
+    return date.fromisoformat(value) if value else None
+
+
+def upsert_ads(
+    session: Session,
+    ads: list[dict],
+    *,
+    gap_id: int | None,
+    sector_slug: str | None,
+    now: datetime,
+) -> int:
+    for a in ads:
+        row = session.scalars(select(Ad).where(Ad.ad_archive_id == a["ad_archive_id"])).first()
+        if row is None:
+            row = Ad(ad_archive_id=a["ad_archive_id"])
+            session.add(row)
+        seen = [d for d in (row.last_seen, _iso_date(a.get("last_seen"))) if d]
+        row.page_name = (a.get("page_name") or "")[:200]
+        row.page_url = a.get("page_url")
+        row.ad_text = a.get("ad_text") or ""
+        row.platforms = list(a.get("platforms") or [])
+        row.first_seen = _iso_date(a.get("first_seen")) or row.first_seen
+        row.last_seen = max(seen) if seen else None
+        row.is_active = bool(a.get("is_active"))
+        row.is_foreign = a.get("is_foreign")
+        row.gap_id = gap_id or row.gap_id
+        row.sector_slug = sector_slug or row.sector_slug
+        row.fetched_at = now
+        row.raw = {"link_url": a.get("link_url")}
+    session.commit()
+    return len(ads)
+
+
+def ads_for_gap(session: Session, gap_id: int, limit: int = 20) -> list[Ad]:
+    return list(
+        session.scalars(
+            select(Ad)
+            .where(Ad.gap_id == gap_id)
+            .order_by(Ad.is_active.desc(), Ad.first_seen.asc().nulls_last(), Ad.id)
+            .limit(limit)
+        )
+    )
+
+
+def social_facts_for_gap(session: Session, gap_id: int, *, now: datetime) -> list[Fact]:
+    return list(
+        session.scalars(
+            select(Fact)
+            .where(
+                Fact.entity_type.in_(("social", "ad_signal")),
+                Fact.entity_key == f"gap:{gap_id}",
+                Fact.expires_at > now,
+            )
+            .order_by(Fact.observed_at.desc(), Fact.id.desc())
+        )
+    )
+
+
+def mark_source(session: Session, name: str, *, ok: bool, now: datetime) -> None:
+    src = session.scalars(select(Source).where(Source.name == name)).first()
+    if src is None:
+        return
+    if ok:
+        src.last_ok_at = now
+        src.enabled = True
+    else:
+        src.failure_count = (src.failure_count or 0) + 1
+    session.commit()
 
 
 # ---------- journal, briefs, scorecard, settings ----------

@@ -147,6 +147,15 @@ SOURCES: list[dict] = [
         "enabled": False,
     },
     {
+        "tier": "C",
+        "name": "kosovo-sites",
+        "kind": "web",
+        "base_url": None,
+        "ttl_hours": 24 * 7,
+        "cost_per_call_eur": Decimal("0"),
+        "enabled": False,
+    },
+    {
         "tier": "D",
         "name": "founder",
         "kind": "field",

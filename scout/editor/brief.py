@@ -11,6 +11,7 @@ import anthropic
 from scout.budget.guard import BudgetExceeded
 from scout.db import repo
 from scout.llm.gateway import LLM, LLMError
+from scout.worker.social_guard import resume_text
 
 NARRATIVE_SYSTEM = (
     "You write the two-sentence opening of a daily brief for a founder in Kosovo who is looking "
@@ -33,10 +34,19 @@ class BriefInputs:
     cap: Decimal
     places_calls: int
     gap_titles: dict[int, str] = field(default_factory=dict)
+    apify_usd: Decimal = Decimal("0")
+    apify_cap_usd: Decimal | None = None
 
 
 def collect_inputs(
-    session, run, *, today: date, now: datetime, changes: list, chart_report=None
+    session,
+    run,
+    *,
+    today: date,
+    now: datetime,
+    changes: list,
+    chart_report=None,
+    apify_cap_usd: Decimal | None = None,
 ) -> BriefInputs:
     facts = [
         f
@@ -61,6 +71,8 @@ def collect_inputs(
         cap=Decimal(run.budget_cap_eur),
         places_calls=repo.places_calls_in_month(session, today),
         gap_titles=titles,
+        apify_usd=repo.apify_usd_in_month(session, today),
+        apify_cap_usd=apify_cap_usd,
     )
 
 
@@ -72,6 +84,12 @@ def _money(x: Decimal) -> str:
     return f"€{Decimal(x).quantize(Decimal('0.01'))}"
 
 
+def _social_used_up(inputs: BriefInputs) -> str | None:
+    if inputs.apify_cap_usd is None or inputs.apify_usd < inputs.apify_cap_usd:
+        return None
+    return resume_text(inputs.today)
+
+
 def render_brief(inputs: BriefInputs, narrative: str = "") -> str:
     n_tasks = len(inputs.tasks)
     if is_quiet(inputs):
@@ -81,7 +99,8 @@ def render_brief(inputs: BriefInputs, narrative: str = "") -> str:
             line += f"; {n_failed} failed"
         if inputs.chart_errors:
             line += f"; {len(inputs.chart_errors)} chart errors"
-        return line + "."
+        used_up = _social_used_up(inputs)
+        return line + "." + (f" {used_up}" if used_up else "")
     top = sorted(inputs.changes, key=lambda c: -c.new_score)
     headline = (
         f"# {inputs.today.isoformat()} — {top[0].title}: {top[0].new_status} ({top[0].new_score}/100)"
@@ -121,6 +140,12 @@ def render_brief(inputs: BriefInputs, narrative: str = "") -> str:
         f"- tasks failed: {len(failed)}; chart errors: {len(inputs.chart_errors)}; "
         f"Places calls this month: {inputs.places_calls}/4500",
     ]
+    if inputs.apify_cap_usd is not None:
+        lines.append(
+            f"- Social credit: ${inputs.apify_usd:.2f} of ${inputs.apify_cap_usd:.2f} this month"
+        )
+        if used_up := _social_used_up(inputs):
+            lines.append(f"- {used_up}")
     lines += [f"- {e}" for e in inputs.chart_errors[:5]]
     lines += [
         "",
@@ -132,10 +157,24 @@ def render_brief(inputs: BriefInputs, narrative: str = "") -> str:
 
 
 def write_brief(
-    session, llm: LLM, run, *, today: date, now: datetime, changes: list, chart_report=None
+    session,
+    llm: LLM,
+    run,
+    *,
+    today: date,
+    now: datetime,
+    changes: list,
+    chart_report=None,
+    apify_cap_usd: Decimal | None = None,
 ) -> str:
     inputs = collect_inputs(
-        session, run, today=today, now=now, changes=changes, chart_report=chart_report
+        session,
+        run,
+        today=today,
+        now=now,
+        changes=changes,
+        chart_report=chart_report,
+        apify_cap_usd=apify_cap_usd,
     )
     narrative = ""
     if not is_quiet(inputs):

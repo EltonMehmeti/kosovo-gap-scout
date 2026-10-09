@@ -26,9 +26,14 @@ Spec: docs/superpowers/specs/2026-10-09-kosovo-gap-scout-design.md
   (it emails first; re-enable it on the Actions tab).
 - Secrets: repo secrets `ANTHROPIC_API_KEY` and `DATABASE_URL` (later `GOOGLE_PLACES_API_KEY`); dashboard
   env vars live in Render; local ones in `.env` (never committed).
+- Social eyes (optional, free): create a free Apify account (email only, no card), copy the API token
+  from Apify Console → Settings → Integrations, and add it as the repo secret `APIFY_TOKEN`. The scout
+  then checks Instagram shops and Meta ads for gaps scoring 60+ and runs a Monday ads sweep. It stops at
+  `$4.50` of the ~$5 monthly free credit (repo variable `SCOUT_APIFY_MONTHLY_USD`). Without the token
+  it runs as before. Kosovo sites (Merrjep, KosovaJob, news) are read with Crawl4AI in the workflow.
 - Database setup runs **from your machine** (there is no migration step in the workflow): put the
-  Neon `DATABASE_URL` in your local `.env`, then run `uv run scout init-db` and `uv run scout seed`. Re-run
-  `init-db` locally after pulling a new migration.
+  Neon `DATABASE_URL` in your local `.env`, then run `uv run scout init-db` and `uv run scout seed`; re-run
+  both after pulling a new migration or seed row.
 - Hand runs: Actions tab → **scout-daily** → **Run workflow**, or `uv run scout run --budget 1.00` locally
   against Neon; then read `scout brief`.
 - Budget: defaults to `1.00`; on 2026-10-19 set the repo variable `SCOUT_DAILY_BUDGET_EUR=3.00`

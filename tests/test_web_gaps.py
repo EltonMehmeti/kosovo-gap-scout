@@ -147,3 +147,116 @@ def test_detail_shows_scores_and_readable_critic_json(web, gap, db_session):
     assert "poor" in html and "Proven elsewhere" in html and "10/25" in html
     assert "<dt>Verdict</dt>" in html and "payments" in html and "<dt>Who</dt>" in html
     assert "40% sure" in html and "Raw data" in html
+
+
+def test_gap_page_shows_the_social_card(web, db_session):
+    from datetime import UTC, datetime
+
+    from scout.db.repo import FactIn
+
+    repo.get_or_create_sector(db_session, "food", "Food")
+    gap, _ = repo.propose_gap(
+        db_session,
+        title="Cake delivery",
+        sector_slug="food",
+        proven_model_slug=None,
+        hypothesis_md="",
+        presence_level="instagram-only",
+        why_not_yet_md="",
+        run_id=None,
+    )
+    now = datetime.now(UTC)
+    shop = {
+        "username": "tortat.e.mira",
+        "name": "Tortat e Mira",
+        "followers": 5400,
+        "category": "Bakery",
+        "last_post": "2026-10-01",
+        "url": "https://x",
+    }
+    for claim, value in (
+        ("ig", {"shops": [shop], "questions": {"price": 2, "delivery": 1, "where": 0}}),
+        ("old fact without value", None),
+    ):
+        repo.upsert_fact(
+            db_session,
+            FactIn(
+                claim=claim,
+                entity_type="social",
+                entity_key=f"gap:{gap.id}",
+                confidence=0.7,
+                value=value,
+            ),
+            run_id=None,
+            observed_at=now,
+        )
+    repo.upsert_ads(
+        db_session,
+        [
+            {
+                "ad_archive_id": "222",
+                "page_name": "Shopi AL",
+                "page_url": None,
+                "ad_text": "x",
+                "platforms": ["instagram"],
+                "first_seen": "2026-10-01",
+                "last_seen": "2026-10-19",
+                "is_active": True,
+                "is_foreign": True,
+                "link_url": "https://shopi.al",
+            }
+        ],
+        gap_id=gap.id,
+        sector_slug="food",
+        now=now,
+    )
+    html = web.get(f"/gaps/{gap.id}").text
+    assert "Instagram shops" in html and "Tortat e Mira" in html and "5400 followers" in html
+    assert "Shopi AL" in html and "Foreign seller" in html
+    assert "price 2" in html and "Only on Instagram (informal)" in html
+
+
+def test_gap_page_without_social_data(web, db_session):
+    repo.get_or_create_sector(db_session, "food", "Food")
+    gap, _ = repo.propose_gap(
+        db_session,
+        title="Cakes",
+        sector_slug="food",
+        proven_model_slug=None,
+        hypothesis_md="",
+        presence_level="unknown",
+        why_not_yet_md="",
+        run_id=None,
+    )
+    assert "No social checks for this gap yet." in web.get(f"/gaps/{gap.id}").text
+
+
+def test_gap_page_survives_odd_agent_written_social_facts(web, db_session):
+    from datetime import UTC, datetime
+
+    from scout.db.repo import FactIn
+
+    repo.get_or_create_sector(db_session, "food", "Food")
+    gap, _ = repo.propose_gap(db_session, title="Cakes", sector_slug="food")
+    for n, value in enumerate(
+        (
+            {"shops": ["@x"]},
+            {"questions": {"price": "many"}},
+            {"questions": ["price"]},
+            {"shops": "x", "questions": {"price": 3}},
+        )
+    ):
+        repo.upsert_fact(
+            db_session,
+            FactIn(
+                claim=f"c{n}",
+                entity_type="social",
+                entity_key=f"gap:{gap.id}",
+                confidence=0.5,
+                value=value,
+            ),
+            run_id=None,
+            observed_at=datetime.now(UTC),
+        )
+    r = web.get(f"/gaps/{gap.id}")
+    assert r.status_code == 200 and "price 3" in r.text
