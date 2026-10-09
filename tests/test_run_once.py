@@ -481,3 +481,50 @@ def test_strategist_skipped_when_no_fresh_facts(world, settings):
         **_kw(world, now=later, clock=lambda: later, client=client, runner_factory=boom),
     )
     assert not [c for c in client.messages.calls if "output_format" in c]
+
+
+def test_dry_run_on_capped_day_writes_nothing(world, settings):
+    s = world["factory"]()
+    repo.record_cost(
+        s,
+        repo.CostRecord("llm", "anthropic", "claude-sonnet-5-5", {}, Decimal("3.00")),
+        day=MONDAY,
+        run_id=None,
+    )
+    tasks_before = s.query(repo.Task).count()
+    s.close()
+    client = FakeClient([])
+    summary = R.run_once(settings, **_kw(world, client=client, runner_factory=None, dry_run=True))
+    assert summary.stopped_reason == "dry run" and client.messages.calls == []
+    s = world["factory"]()
+    assert repo.last_run(s).status == "dry-run"
+    assert repo.latest_brief(s) is None and repo.latest_journal(s) == []
+    assert s.query(repo.Scorecard).count() == 0 and s.query(repo.Task).count() == tasks_before
+    s.close()
+
+
+class _Crash(BaseException):
+    pass
+
+
+def test_crash_after_claim_requeues_exactly_that_task(world, settings):
+    def crash(**kwargs):
+        raise _Crash("simulated kill")
+
+    s = world["factory"]()
+    other = repo.enqueue_task(s, profile="news-scan", payload={}, priority=1, run_id=999)
+    other = repo.claim_next_task(s, "other-run", now=NOW)  # another run's claimed task
+    s.close()
+    with pytest.raises(_Crash):
+        R.run_once(
+            settings,
+            **_kw(world, client=_client(world["gap"].id), runner_factory=crash),
+        )
+    s = world["factory"]()
+    run = repo.last_run(s)
+    assert run.status == "failed"
+    running = [t for t in s.query(repo.Task) if t.status == "running"]
+    assert [t.id for t in running] == [other.id]  # the other run's claim is untouched
+    claimed = [t for t in repo.tasks_for_run(s, run.id) if t.attempts == 0 and t.status == "queued"]
+    assert claimed  # the crashed task was released with its attempt given back
+    s.close()

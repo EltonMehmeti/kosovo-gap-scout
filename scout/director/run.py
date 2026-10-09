@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import traceback
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -163,6 +164,7 @@ def run_once(
         places = PlacesClient(settings.google_places_api_key)
     session = session_factory()
     run_id: int | None = None
+    progress: dict = {"task_id": None, "done": 0, "failed": 0}
     try:
         phase = (
             phase_override
@@ -195,42 +197,55 @@ def run_once(
             runner_factory=runner_factory,
             clock=clock,
             worker_id=worker_id,
+            progress=progress,
         )
     except BaseException as exc:
         if run_id is not None:
-            _close_failed(session, session_factory, run_id, exc, clock())
+            _close_failed(session, session_factory, run_id, exc, clock(), progress)
         raise
     finally:
         session.close()
 
 
-def _close_failed(session, session_factory, run_id: int, exc: BaseException, at: datetime) -> None:
-    """Never leave a run 'running': release its claimed tasks and mark it failed (fresh session if needed)."""
+def _close_failed(
+    session, session_factory, run_id: int, exc: BaseException, at: datetime, progress: dict
+) -> None:
+    """Never leave a run 'running': release its claimed task and mark it failed (fresh session if needed)."""
     tail = "".join(traceback.format_exception(exc))[-1500:]
     summary = f"failed: {type(exc).__name__}: {exc}\n{tail}"[:4000]
-    for attempt in (session, None):
-        s = attempt if attempt is not None else session_factory()
+    errors: list[str] = []
+    for use_fresh in (False, True):
+        s = None
         try:
+            s = session_factory() if use_fresh else session
             s.rollback()
-            repo.release_run_tasks(s, run_id)
+            if progress.get("task_id") is not None:
+                task = s.get(repo.Task, progress["task_id"])
+                if task is not None and task.status == "running":
+                    repo.release_task(s, task, give_back_attempt=True)
             row = s.get(repo.Run, run_id)
             if row is not None:
+                try:  # best effort: do not understate the row
+                    row.spent_eur = repo.spent_on(s, row.day)
+                except Exception:  # noqa: BLE001
+                    s.rollback()
                 repo.finish_run(
                     s,
                     row,
                     spent_eur=row.spent_eur,
-                    tasks_done=row.tasks_done,
-                    tasks_failed=row.tasks_failed,
+                    tasks_done=progress.get("done", 0),
+                    tasks_failed=progress.get("failed", 0),
                     summary_md=summary,
                     finished_at=at,
                     status="failed",
                 )
             return
-        except Exception:  # noqa: BLE001 — fall back to a fresh session, then give up quietly
-            continue
+        except Exception as cleanup_exc:  # noqa: BLE001 — the original exception is what gets raised
+            errors.append(f"{type(cleanup_exc).__name__}: {cleanup_exc}")
         finally:
-            if attempt is None:
+            if use_fresh and s is not None:
                 s.close()
+    print(f"scout: could not close failed run {run_id}: {'; '.join(errors)}", file=sys.stderr)
 
 
 def _run_body(
@@ -251,6 +266,7 @@ def _run_body(
     runner_factory,
     clock,
     worker_id,
+    progress,
 ) -> RunSummary:
     guard = BudgetGuard(session, day=today, daily_cap_eur=cap, run_id=run.id)
     llm = LLM(client, guard, Decimal(settings.usd_to_eur))
@@ -263,9 +279,7 @@ def _run_body(
     stopped_reason = "queue empty"
     exhausted = guard.spent() >= cap
 
-    if exhausted:  # spec B2.1: refuse the work if the cap is already spent; still brief and close
-        stopped_reason = "budget"
-    elif dry_run:
+    if dry_run:  # a dry run never writes beyond its own runs row, even on a capped day
         earlier_runs = [r.id for r in repo.runs_on_day(session, today) if r.id != run.id]
         state = load_state(session, today=today, now=now, cap=cap, run_ids_today=earlier_runs)
         queued = repo.queued_tasks(session)
@@ -288,6 +302,8 @@ def _run_body(
         return RunSummary(
             run.id, today, phase, len(lines), 0, 0, Decimal("0"), "\n".join(lines), "dry run"
         )
+    elif exhausted:  # spec B2.1: refuse the work if the cap is already spent; still brief and close
+        stopped_reason = "budget"
     else:
         stale_cut = now - timedelta(minutes=settings.run_max_minutes)
         released = repo.release_stale_tasks(session, claimed_before=stale_cut)
@@ -340,6 +356,7 @@ def _run_body(
             task = repo.claim_next_task(session, worker_id, now=clock())
             if task is None:
                 break
+            progress["task_id"] = task.id
             outcome = None
             try:  # the work itself (the only part whose failure may requeue a task)
                 if task.profile == "chart-diff":
@@ -391,6 +408,7 @@ def _run_body(
                 repo.release_task(
                     session, task, give_back_attempt=True
                 )  # stays queued for tomorrow
+                progress["task_id"] = None
                 stopped_reason = "budget"
                 break
             except Exception as e:  # noqa: BLE001 — one bad task must not end the day
@@ -402,8 +420,10 @@ def _run_body(
                     now=clock(),
                     requeue=True,
                 )
+                progress["task_id"] = None
                 if task.status == "failed":
                     failed += 1
+                    progress["failed"] = failed
                 continue
             try:  # post-processing of paid work: never requeue (would repay for the research)
                 repo.finish_task(
@@ -421,10 +441,12 @@ def _run_body(
                     repo.fail_task(
                         session, task, error=f"post-processing: {e}", now=clock(), requeue=False
                     )
+            progress["task_id"] = None
             if task.status == "failed":
                 failed += 1
             else:
                 done += 1
+            progress["done"], progress["failed"] = done, failed
             if outcome is not None and outcome.budget_stopped:
                 stopped_reason = "budget"
                 break
