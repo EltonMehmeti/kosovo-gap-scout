@@ -145,3 +145,13 @@ def test_today_cap_and_effective_cap(db_session, settings):
     assert founder.effective_cap(db_session, settings, "foundation", TODAY) == Decimal("1.50")
     assert founder.set_today_cap(db_session, "", today=TODAY) is None
     assert founder.today_cap(db_session, TODAY) is None
+
+
+def test_park_is_remembered_until_reopen_or_kill(db_session, gap):
+    founder.set_gap_status(db_session, gap.id, "park", today=TODAY, now=NOW)
+    assert founder.founder_parked(db_session) == [gap.id]
+    founder.set_gap_status(db_session, gap.id, "reopen", today=TODAY, now=NOW)
+    assert founder.founder_parked(db_session) == []
+    founder.set_gap_status(db_session, gap.id, "park", today=TODAY, now=NOW)
+    founder.set_gap_status(db_session, gap.id, "kill", today=TODAY, now=NOW)
+    assert founder.founder_parked(db_session) == []

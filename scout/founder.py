@@ -58,6 +58,11 @@ def finalists(session: Session) -> list[int]:
     return _ids(session, "finalists")
 
 
+def founder_parked(session: Session) -> list[int]:
+    """Gaps the founder parked by hand: the scout never revives or re-scores these."""
+    return _ids(session, "founder_parked")
+
+
 def set_gap_status(
     session: Session, gap_id: int, action: str, *, today: date, now: datetime
 ) -> Gap:
@@ -68,6 +73,10 @@ def set_gap_status(
     gap.status = GAP_ACTIONS[action]
     gap.updated_at = now
     session.commit()
+    parked = [g for g in founder_parked(session) if g != gap_id]
+    repo.set_setting(
+        session, "founder_parked", sorted({*parked, gap_id}) if action == "park" else parked
+    )
     if action == "kill":  # a killed gap is neither verified next nor a finalist
         repo.set_setting(session, "flagged_gaps", [g for g in flagged(session) if g != gap_id])
         repo.set_setting(session, "finalists", [g for g in finalists(session) if g != gap_id])

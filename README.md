@@ -47,5 +47,6 @@ Every button goes through `scout/founder.py` and is journaled, and the CLI uses 
   `ANTHROPIC_API_KEY`.
 - Changing `DASHBOARD_TOKEN` logs out every browser.
 - "Verify" queues one re-verification of the gap; it never marks a gap verified by hand (spec A10).
-  "Kill" sticks until you press "Reopen".
+  "Kill" and "Park" stick until you press "Reopen": the scout never re-scores or revives a gap you
+  parked or killed.
 - Today's cap (Costs page or `scout set-cap 1.50`) replaces the phase cap for that Kosovo day only.
