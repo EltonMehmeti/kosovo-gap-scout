@@ -630,3 +630,62 @@ def test_completed_verify_gap_clears_the_founder_flag(world, settings, cut):
         R._apply_outcome(s, task, outcome, today=MONDAY, now=NOW)
         flags = repo.get_setting(s, "flagged_gaps")
     assert flags == ([999] if cut is None else [gid, 999])
+
+
+def test_deep_dive_brief_carries_the_gap_hypothesis(world, settings, monkeypatch):
+    briefs = {}
+
+    def capture(self, task_id, profile, brief, ctx):
+        briefs[profile.name] = brief
+        return TaskOutcome("memo", "end_turn", 1, Decimal("0.01"), 0, 0, False, False)
+
+    monkeypatch.setattr(ResearchWorker, "run", capture)
+    with world["factory"]() as s:
+        repo.get_gap(s, world["gap"].id).hypothesis_md = "Diaspora families pay sitters in Prizren"
+        s.commit()
+        repo.enqueue_task(  # an empty hypothesis in the payload must not hide the gap's own
+            s,
+            profile="deep-dive",
+            payload={"gap_id": world["gap"].id, "gap_title": "x", "hypothesis": ""},
+            priority=99,
+        )
+    R.run_once(
+        settings,
+        **_kw(world, client=_client(world["gap"].id), runner_factory=fake_runner_factory([], [])),
+    )
+    assert "Hypothesis: Diaspora families pay sitters in Prizren" in briefs["deep-dive"]
+
+
+def test_sigterm_mid_run_closes_the_run_failed(world, settings, monkeypatch):
+    def killed(self, *a, **k):
+        raise SystemExit(143)  # what the SIGTERM handler raises
+
+    monkeypatch.setattr(ResearchWorker, "run", killed)
+    with pytest.raises(SystemExit):
+        R.run_once(
+            settings,
+            **_kw(
+                world, client=_client(world["gap"].id), runner_factory=fake_runner_factory([], [])
+            ),
+        )
+    with world["factory"]() as s:
+        assert repo.last_run(s).status == "failed"
+
+
+@pytest.mark.parametrize(
+    ("line", "question"),
+    [
+        ("field-check: Call two vets in Prizren?", "Call two vets in Prizren?"),
+        ("- field-check: Call two vets?", "Call two vets?"),
+        ("* **field-check:** Call two vets?", "Call two vets?"),
+        ("**Field-check**: Call two vets?", "Call two vets?"),
+        ("• field check: Visit a groomer", "Visit a groomer"),
+        ("1. __field-check:__ Ask a pet shop", "Ask a pet shop"),
+        ("> Field-Check : Ask a pet shop", "Ask a pet shop"),
+        ("The field-check: idea is weak", None),
+        ("- field-check:", None),
+        ("no question here", None),
+    ],
+)
+def test_field_check_line_parse_tolerates_markdown(line, question):
+    assert R.parse_field_check(line) == question

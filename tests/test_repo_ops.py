@@ -151,3 +151,21 @@ def test_field_checks(db_session):
     assert [f.id for f in repo.open_field_checks(db_session)] == [fc.id]
     repo.answer_field_check(db_session, fc, answer="No, only vets", answered_at=NOW)
     assert repo.open_field_checks(db_session) == [] and fc.status == "answered"
+
+
+def test_release_stale_tasks_fails_tasks_out_of_attempts(db_session):
+    from datetime import timedelta
+
+    once = repo.enqueue_task(db_session, profile="news-scan", payload={}, priority=10)
+    repo.claim_next_task(db_session, "ghost", now=NOW - timedelta(hours=3))
+    twice = repo.enqueue_task(db_session, profile="map-sector", payload={"sector": "x"}, priority=5)
+    twice.attempts = repo.MAX_ATTEMPTS - 1
+    db_session.commit()
+    repo.claim_next_task(db_session, "ghost", now=NOW - timedelta(hours=3))
+    assert twice.attempts == repo.MAX_ATTEMPTS
+    released = repo.release_stale_tasks(
+        db_session, claimed_before=NOW - timedelta(hours=1), now=NOW
+    )
+    assert released == 2
+    assert once.status == "queued" and once.locked_by is None
+    assert twice.status == "failed" and twice.finished_at == NOW and "attempts" in twice.error

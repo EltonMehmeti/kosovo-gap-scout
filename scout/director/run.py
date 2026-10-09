@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import traceback
 from dataclasses import dataclass
@@ -307,7 +308,7 @@ def _run_body(
         stopped_reason = "budget"
     else:
         stale_cut = now - timedelta(minutes=settings.run_max_minutes)
-        released = repo.release_stale_tasks(session, claimed_before=stale_cut)
+        released = repo.release_stale_tasks(session, claimed_before=stale_cut, now=now)
         if released:
             notes.append(f"released {released} stale running task(s)")
         # 1. plan
@@ -383,8 +384,10 @@ def _run_body(
                     if task.profile in ("verify-gap", "deep-dive") and payload.get("gap_id"):
                         gap = repo.get_gap(session, int(payload["gap_id"]))
                         if gap is not None:
-                            payload.setdefault("hypothesis", gap.hypothesis_md)
-                            payload.setdefault("presence_level", gap.presence_level)
+                            payload["hypothesis"] = payload.get("hypothesis") or gap.hypothesis_md
+                            payload["presence_level"] = (
+                                payload.get("presence_level") or gap.presence_level
+                            )
                     brief = build_brief(
                         profile,
                         payload,
@@ -556,6 +559,19 @@ def _run_body(
     )
 
 
+_LIST_MARK = re.compile(r"^(?:[-*•·>]+|\d+[.)])\s*")
+_FIELD_CHECK = re.compile(r"^field[- ]?check\s*:\s*(.*)$", re.IGNORECASE)
+
+
+def parse_field_check(line: str) -> str | None:
+    """The question of a "field-check: …" summary line, tolerating Markdown bullets, numbering, quotes
+    and bold/underline markers; None for any other line."""
+    text = _LIST_MARK.sub("", line.strip()).replace("**", "").replace("__", "").strip()
+    match = _FIELD_CHECK.match(text)
+    question = match.group(1).strip() if match else ""
+    return question or None
+
+
 def _apply_outcome(session, task, outcome, *, today, now) -> None:
     payload = task.payload or {}
     sector = payload.get("sector")
@@ -576,11 +592,12 @@ def _apply_outcome(session, task, outcome, *, today, now) -> None:
             )
     if task.profile == "verify-gap" and payload.get("gap_id"):
         for line in outcome.summary_md.splitlines():
-            if line.lower().startswith("field-check:") and len(repo.open_field_checks(session)) < 5:
+            question = parse_field_check(line)
+            if question and len(repo.open_field_checks(session)) < 5:
                 repo.add_field_check(
                     session,
                     gap_id=int(payload["gap_id"]),
-                    question=line.split(":", 1)[1].strip(),
+                    question=question,
                     why="verify-gap was ambiguous",
                     due=today + timedelta(days=7),
                 )

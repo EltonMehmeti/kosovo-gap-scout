@@ -210,7 +210,7 @@ def plan_tasks(state: PlannerState, phase: str) -> list[PlannedTask]:
         ]
         live.sort(key=lambda g: (-g.score_total, -g.confidence))
         if live:
-            add("deep-dive", _gap_payload(live[0]) | {"hypothesis": ""})
+            add("deep-dive", _gap_payload(live[0]))  # the Director fills in the gap's hypothesis
     # order by priority, then fit the budget greedily
     wanted.sort(key=lambda t: (-t.priority, t.profile))
     remaining = state.cap - state.spent_today

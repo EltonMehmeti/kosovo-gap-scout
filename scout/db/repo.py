@@ -796,16 +796,26 @@ def runs_on_day(session: Session, day: date) -> list[Run]:
     return list(session.scalars(select(Run).where(Run.day == day).order_by(Run.id)))
 
 
-def release_stale_tasks(session: Session, *, claimed_before: datetime) -> int:
-    """Put tasks stuck in 'running' (claimed before the cutoff) back in the queue."""
+def release_stale_tasks(
+    session: Session, *, claimed_before: datetime, now: datetime | None = None
+) -> int:
+    """Put tasks stuck in 'running' (claimed before the cutoff) back in the queue — or fail them when they
+    have used MAX_ATTEMPTS, so a task that keeps getting the process killed cannot loop forever."""
     stale = list(
         session.scalars(
             select(Task).where(Task.status == "running", Task.started_at < claimed_before)
         )
     )
     for t in stale:
-        t.status = "queued"
         t.locked_by = None
+        if t.attempts >= MAX_ATTEMPTS:
+            t.status = "failed"
+            t.finished_at = now or claimed_before
+            t.error = (
+                f"left running by a killed run; {t.attempts} attempts used (max {MAX_ATTEMPTS})"
+            )
+        else:
+            t.status = "queued"
     session.commit()
     return len(stale)
 
