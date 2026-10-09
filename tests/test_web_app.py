@@ -112,3 +112,42 @@ def test_today_renders_the_brief_and_mark_read(web, db_session):
     db_session.expire_all()
     assert repo.get_setting(db_session, "brief_read") == {"id": b.id}
     assert 'new-brief">New' not in web.get("/").text
+
+
+def test_home_needs_you_lists_every_actionable_item(web, db_session):
+    from datetime import date
+
+    repo.save_brief(db_session, run_id=None, day=date(2026, 10, 9), markdown="# Hi")
+    repo.add_field_check(db_session, gap_id=None, question="q?", why="w", due=date(2026, 10, 11))
+    t = repo.enqueue_task(db_session, profile="news-scan", payload={}, priority=40)
+    t.status = "failed"
+    db_session.commit()
+    html = web.get("/").text
+    assert "New brief for" in html and "1 field check to answer" in html
+    assert "1 failed task" in html and "All clear" not in html
+    assert 'href="#brief"' in html and 'action="/brief/' in html
+
+
+def test_home_is_all_clear_on_an_empty_database(web):
+    html = web.get("/").text
+    assert "All clear ✓" in html
+    for tile in ("Spent today", "This month", "Open gaps", "Next run"):
+        assert tile in html
+    assert "Today 0" in html or "Tomorrow 0" in html  # next run, e.g. "Tomorrow 07:00"
+    assert any(g in html for g in ("Good morning", "Good afternoon", "Good evening"))
+
+
+def test_home_counts_open_gaps_and_survives_a_zero_cap(web, db_session):
+    from scout import founder
+    from scout.clock import local_today
+    from scout.seeds import seed_all
+
+    seed_all(db_session)
+    a, _ = repo.propose_gap(db_session, title="Pet sitting", sector_slug="pets")
+    b, _ = repo.propose_gap(db_session, title="Vet booking", sector_slug="pets")
+    b.status = "killed"
+    db_session.commit()
+    founder.set_today_cap(db_session, "0", today=local_today("Europe/Belgrade"))
+    r = web.get("/")
+    assert r.status_code == 200 and "of €0.00 limit" in r.text
+    assert '<span class="tile-value">1</span>' in r.text  # only the open gap counts

@@ -1,23 +1,63 @@
 {% extends "base.html" %}
-{% block title %}Today{% endblock %}
+{% import "_ui.html" as ui with context %}
+{% block title %}Home{% endblock %}
 {% block content %}
-<p class="muted">
-  Last run: {% if last %}{{ last.day }} · {{ last.status }}{% else %}none yet{% endif %}
-  · spent today €{{ spent_today }} · month €{{ spent_month }}
-  · <a href="/pipeline">{{ queued }} queued</a>
-  · <a href="/field-checks">{{ open_checks }} field check{{ '' if open_checks == 1 else 's' }}</a>
-  · <a href="/gaps">gaps →</a>
-</p>
-{% if brief %}
-  <div class="row">
-    <span class="muted">Brief for {{ brief.day }}</span>
-    {% if unread %}
-      <span class="badge new-brief">New</span>
-      <form class="inline" method="post" action="/brief/{{ brief.id }}/read"><button>Mark read</button></form>
+{{ ui.page_header(greeting, now_local.strftime("%A, %B ") ~ now_local.day ~ " — what needs you, and what the scout did.") }}
+
+<section class="card needs" aria-labelledby="needs-title">
+  <h2 id="needs-title">{{ ui.icon("inbox") }} Needs you</h2>
+  {% if not ((brief and unread) or open_checks or failed) %}
+  <p class="all-clear">{{ ui.icon("circle-check") }} All clear ✓ — nothing needs you right now.</p>
+  {% else %}
+  <ul class="todo">
+    {% if brief and unread %}
+    <li>
+      <span class="what">{{ ui.icon("sparkles") }} New brief for {{ ui.date(brief.day) }} {{ ui.chip("New", "indigo", cls="new-brief") }}</span>
+      <a class="btn sm primary" href="#brief">Read</a>
+      {{ ui.post_button("/brief/%d/read" | format(brief.id), "Mark read", cls="sm") }}
+    </li>
     {% endif %}
+    {% if open_checks %}
+    <li>
+      <span class="what">{{ ui.icon("message-circle-question") }} {{ open_checks }} field check{{ "" if open_checks == 1 else "s" }} to answer</span>
+      <a class="btn sm primary" href="/field-checks">Answer</a>
+    </li>
+    {% endif %}
+    {% if failed %}
+    <li>
+      <span class="what">{{ ui.icon("triangle-alert") }} {{ failed }} failed task{{ "" if failed == 1 else "s" }}</span>
+      <a class="btn sm" href="/pipeline">Review</a>
+    </li>
+    {% endif %}
+  </ul>
+  {% endif %}
+</section>
+
+<div class="tiles">
+  {{ ui.stat_tile("Spent today", spent_today | eur, "of " ~ (cap | eur) ~ " limit", "/costs", (spent_today / cap * 100) if cap else (100 if spent_today else 0), "euro") }}
+  {{ ui.stat_tile("This month", spent_month | eur, "since the 1st", "/costs", none, "calendar") }}
+  {{ ui.stat_tile("Open gaps", open_gaps, "new, being checked or confirmed", "/gaps", none, "lightbulb") }}
+  {{ ui.stat_tile("Next run", next_run, "the scout runs by itself every morning", "/pipeline", none, "clock") }}
+</div>
+
+<p class="last-run">
+  {% if last %}
+  Last run {{ ui.status_chip("run", last.status) }} {{ ui.date(last.day) }} · {{ last.tasks_done }} done · {{ last.tasks_failed }} failed · {{ last.spent_eur | eur }}
+  <a href="/pipeline">Details →</a>
+  {% else %}
+  No runs yet — the first one starts by itself ({{ next_run }}).
+  {% endif %}
+</p>
+
+<section id="brief" class="card">
+  {% if brief %}
+  <div class="article-head">
+    <h2>Brief for {{ ui.date(brief.day) }}</h2>
+    {% if unread %}{{ ui.chip("New", "indigo", cls="new-brief") }}{% endif %}
   </div>
-  <article class="card md">{{ brief.markdown | md }}</article>
-{% else %}
-  <div class="card">No brief yet. The first one appears after the next run.</div>
-{% endif %}
+  <article class="md prose">{{ brief.markdown | md }}</article>
+  {% else %}
+  {{ ui.empty_state("sparkles", "No brief yet. The first one appears after the next run.") }}
+  {% endif %}
+</section>
 {% endblock %}
