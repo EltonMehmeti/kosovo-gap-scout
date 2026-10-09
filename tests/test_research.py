@@ -1,4 +1,5 @@
 from decimal import Decimal
+from types import SimpleNamespace
 
 from scout.llm.gateway import LLM
 from scout.worker.profiles import PROFILES
@@ -60,7 +61,9 @@ def test_worker_runs_to_end_turn_and_records_each_message():
     assert "thinking" not in kw and "tool_choice" not in kw
     names = [t.name for t in kw["tools"] if hasattr(t, "name")]
     assert names[0] == "kb_search" and len(names) == 11
-    assert {"type": "web_search_20260209", "name": "web_search", "max_uses": 12} in kw["tools"]
+    # per request at most PER_REQUEST_MAX_SEARCHES; the task total (12) is enforced across requests
+    assert {"type": "web_search_20260209", "name": "web_search", "max_uses": 4} in kw["tools"]
+    assert kw["cache_control"] == {"type": "ephemeral"}  # caches the growing history (I1)
     assert kw["messages"] == [{"role": "user", "content": "brief"}]
 
 
@@ -150,3 +153,73 @@ def test_max_tokens_turn_does_not_run_tools():
     worker = ResearchWorker(FakeClient(), llm, guard, SYSTEM, runner_factory=factory)
     out = worker.run(5, PROFILES["map-sector"], "brief", _ctx(guard))
     assert executed == [] and out.truncated and out.iterations == 1
+
+
+def _searching(n, stop="tool_use", tid="t"):
+    return FakeMessage(
+        content=[tool_use_block("kb_search", {"query": "x"}, id=tid)]
+        if stop == "tool_use"
+        else [text_block(f"{stop} text")],
+        stop_reason=stop,
+        usage=FakeUsage(server_tool_use=SimpleNamespace(web_search_requests=n)),
+    )
+
+
+def _web_search_max_uses(kw):
+    return next(
+        t["max_uses"] for t in kw["tools"] if isinstance(t, dict) and t["name"] == "web_search"
+    )
+
+
+def test_step_estimate_follows_the_last_iteration_cost():
+    # 20k input tokens on Sonnet = €0.0368 per message; the fixed €0.03 estimate would allow a third
+    # request at 0.0736 + 0.03 <= 0.11, the adaptive one (1.25 x 0.0368 = 0.046) does not.
+    guard, calls = FakeGuard(cap=Decimal("0.11")), []
+    big = FakeUsage(input_tokens=20_000, output_tokens=0)
+    msgs = [
+        FakeMessage(
+            content=[tool_use_block("kb_search", {"query": "x"}, id=f"t{i}")],
+            stop_reason="tool_use",
+            usage=big,
+        )
+        for i in range(4)
+    ]
+    out = _worker(guard, [msgs], calls).run(5, PROFILES["map-sector"], "brief", _ctx(guard))
+    assert out.iterations == 2 and out.budget_stopped
+
+
+def test_search_allowance_is_per_task_and_the_model_is_told_when_it_is_used_up():
+    guard, calls = FakeGuard(), []
+    ctx = _ctx(guard)
+    msgs = [
+        _searching(6, tid="a"),
+        _searching(6, tid="b"),  # 12 of 12 used: tools now carry the note
+        _searching(0, tid="c"),
+        _searching(0, stop="end_turn"),
+    ]
+    out = _worker(guard, [msgs], calls).run(5, PROFILES["map-sector"], "brief", ctx)
+    assert out.web_searches == 12 and not out.search_capped and out.iterations == 4
+    assert ctx.search_note and "used up" in ctx.search_note
+    assert _web_search_max_uses(calls[0]) == 4
+
+
+def test_task_stops_once_searches_exceed_the_task_allowance():
+    guard, calls = FakeGuard(), []
+    msgs = [_searching(4, tid=str(i)) for i in range(5)]  # 4, 8, 12, 16 -> stop after the 4th
+    out = _worker(guard, [msgs], calls).run(5, PROFILES["map-sector"], "brief", _ctx(guard))
+    assert out.search_capped and out.iterations == 4 and out.web_searches == 16
+    assert "web-search allowance" in out.summary_md and not out.budget_stopped
+
+
+def test_restart_lowers_max_uses_to_the_remaining_allowance():
+    guard, calls = FakeGuard(), []  # news-scan: 4 searches per task
+    script = [[_searching(3, stop="pause_turn")], [_searching(0, stop="end_turn")]]
+    out = _worker(guard, script, calls).run(5, PROFILES["news-scan"], "brief", _ctx(guard))
+    assert [_web_search_max_uses(kw) for kw in calls] == [4, 1] and out.restarts == 1
+
+
+def test_no_restart_once_the_allowance_is_spent():
+    guard, calls = FakeGuard(), []
+    script = [[_searching(4, stop="pause_turn")], [_searching(0, stop="end_turn")]]
+    out = _worker(guard, script, calls).run(5, PROFILES["news-scan"], "brief", _ctx(guard))
+    assert len(calls) == 1 and out.search_capped and out.restarts == 0

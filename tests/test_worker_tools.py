@@ -450,3 +450,8 @@ def test_tools_record_which_gaps_they_touched(ctx):
     T.kb_record_fact_impl(ctx, claim="c", entity_type="gap", entity_key="gap:999", confidence=0.5)
     T.kb_record_fact_impl(ctx, claim="d", entity_type="stat", entity_key="k", confidence=0.5)
     assert ctx.touched_gap_ids == {gap_id, 999}
+
+
+def test_search_note_is_appended_to_every_tool_output(ctx):
+    ctx.search_note = "web-search allowance used up"
+    assert T._run(ctx, "kb_search", lambda c: "result").endswith("web-search allowance used up")

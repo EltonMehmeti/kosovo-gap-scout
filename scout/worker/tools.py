@@ -84,6 +84,9 @@ class ToolContext:
     places_searches: int = 0  # Places searches that actually returned in this task
     app_store_searches: int = 0  # app-store searches that actually returned in this task
     touched_gap_ids: set[int] = field(default_factory=set)  # gaps proposed/updated or written about
+    search_note: str | None = (
+        None  # set by the worker when the task's web-search allowance is used up
+    )
 
 
 def _clip(text: str, limit: int) -> str:
@@ -448,6 +451,8 @@ def _run(ctx: ToolContext, tool_name: str, fn: Callable, /, **kwargs) -> str:
         if ctx.session is not None:
             ctx.session.rollback()
         out = f"error: {type(e).__name__}: {str(e)[:300]}"
+    if ctx.search_note:
+        out = f"{out}\n\n[scout] {ctx.search_note}"
     ctx.events.append({"tool": tool_name, "chars": len(out), "error": out.startswith("error:")})
     return out
 
