@@ -12,6 +12,13 @@ from fastapi import Request
 COOKIE = "scout_auth"
 OPEN_PATHS = frozenset({"/login", "/logout", "/healthz"})
 MAX_AGE = 60 * 60 * 24 * 30  # 30 days
+MIN_TOKEN_LENGTH = 16
+
+
+def usable_token(settings) -> str | None:
+    """The configured DASHBOARD_TOKEN, or None when it is unset or too short to trust."""
+    token = settings.dashboard_token
+    return token if token and len(token) >= MIN_TOKEN_LENGTH else None
 
 
 def cookie_value(token: str) -> str:

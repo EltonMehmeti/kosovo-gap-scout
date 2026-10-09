@@ -695,3 +695,32 @@ def test_without_critic_scores_may_fall(db_session, seeded):
     st.apply(out, S.CriticOutput(verdicts=[]), now=NOW, run_id=11, critic_ok=False)
     g = repo.get_gap(db_session, seeded.id)
     assert g.score_total == 20 + 12 + 15 + 12 + 12 and g.confidence == 0.5
+
+
+def test_founder_parked_gap_is_not_reassessed_and_keeps_its_status(db_session, seeded):
+    from scout import founder
+
+    scout_parked, _ = repo.propose_gap(db_session, title="Scout parked", sector_slug="pets")
+    scout_parked.status = "parked"
+    db_session.commit()
+    founder.set_gap_status(db_session, seeded.id, "park", today=TODAY, now=NOW)
+    st = _strategist(db_session, [])
+    inputs = st.collect_inputs(since=NOW - timedelta(hours=1), now=NOW)
+    ids = {g["id"] for g in inputs.gaps}
+    assert seeded.id not in ids and scout_parked.id in ids
+    # even if the model assesses it anyway, apply leaves it parked
+    out = S.StrategistOutput(
+        assessments=[_assessment(seeded.id, recommended_status="verified")],
+        new_gaps=[],
+        headline="h",
+    )
+    st.apply(out, S.CriticOutput(verdicts=[]), now=NOW, run_id=8)
+    assert repo.get_gap(db_session, seeded.id).status == "parked"
+    # a scout-parked gap is still revivable
+    out = S.StrategistOutput(
+        assessments=[_assessment(scout_parked.id, recommended_status="candidate")],
+        new_gaps=[],
+        headline="h",
+    )
+    st.apply(out, S.CriticOutput(verdicts=[]), now=NOW, run_id=8)
+    assert repo.get_gap(db_session, scout_parked.id).status != "parked"

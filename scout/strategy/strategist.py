@@ -10,6 +10,7 @@ from decimal import Decimal
 from scout.budget.pricing import llm_cost_usd, to_eur
 from scout.db import repo
 from scout.db.models import GapAssessment as GapAssessmentRow
+from scout.founder import founder_parked
 from scout.llm.gateway import LLM
 from scout.strategy import schemas as S
 from scout.strategy.rubric import PRESENCE_CAP, RUBRIC_TEXT, needs_field_check, score_gap
@@ -187,6 +188,8 @@ class Strategist:
         candidates = repo.list_gaps(
             s, statuses=["candidate", "verifying", "verified", "parked"], sector_slugs=sector_slugs
         )
+        held = set(founder_parked(s))  # the founder parked these: leave them alone
+        candidates = [g for g in candidates if g.id not in held]
         candidates.sort(
             key=lambda g: (
                 g.id not in priority,
@@ -357,10 +360,11 @@ class Strategist:
         s = self.session
         result = ApplyResult()
         verdicts = {v.gap_id: v for v in critic.verdicts}
+        held = set(founder_parked(s))
         open_checks = len(repo.open_field_checks(s))
         for a in output.assessments:
             gap = repo.get_gap(s, a.gap_id)
-            if gap is None or gap.status == "killed":
+            if gap is None or gap.status == "killed" or gap.id in held:
                 continue
             v = verdicts.get(a.gap_id)
             risk_penalty = (

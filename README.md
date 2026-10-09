@@ -41,11 +41,13 @@ Spec: docs/superpowers/specs/2026-10-09-kosovo-gap-scout-design.md
 Mobile-first pages: Today, Gaps, Field checks, Pipeline, Knowledge, Journal, Costs and Settings.
 Every button goes through `scout/founder.py` and is journaled, and the CLI uses the same functions.
 
-- Local: `DASHBOARD_TOKEN=dev uv run uvicorn scout.web.main:app --reload`, then open http://127.0.0.1:8000.
+- Local: `DASHBOARD_TOKEN=local-dev-token-1234 uv run uvicorn scout.web.main:app --reload`, then open http://127.0.0.1:8000.
 - Render: set `DATABASE_URL` and `DASHBOARD_TOKEN`. Generate the token with
   `python -c "import secrets; print(secrets.token_urlsafe(32))"`. The dashboard does not need
   `ANTHROPIC_API_KEY`.
-- Changing `DASHBOARD_TOKEN` logs out every browser.
+- `DASHBOARD_TOKEN` must be at least 16 characters; a shorter one locks the dashboard (503) like an
+  unset one. Changing it logs out every browser.
 - "Verify" queues one re-verification of the gap; it never marks a gap verified by hand (spec A10).
-  "Kill" sticks until you press "Reopen".
+  "Kill" and "Park" stick until you press "Reopen": the scout never re-scores or revives a gap you
+  parked or killed.
 - Today's cap (Costs page or `scout set-cap 1.50`) replaces the phase cap for that Kosovo day only.
