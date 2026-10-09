@@ -545,3 +545,67 @@ def test_tool_context_carries_task_profile_and_payload(world, settings, monkeypa
     verify = [p for p in seen if p[0] == "verify-gap"]
     assert verify and verify[0][1]["gap_id"] == world["gap"].id
     assert {p[0] for p in seen} >= {"verify-gap", "map-sector"}
+
+
+def test_critic_failure_still_applies_strategist_output(world, settings):
+    client = _client(world["gap"].id)
+    err = anthropic.APIConnectionError(request=httpx.Request("POST", "http://x"))
+    client.messages._responses.insert(1, err)  # the Critic call fails
+    del client.messages._responses[2]  # (the critic answer it replaced)
+    summary = R.run_once(
+        settings,
+        **_kw(
+            world,
+            client=client,
+            runner_factory=fake_runner_factory([_conversation() for _ in range(5)], []),
+        ),
+    )
+    with world["factory"]() as s:
+        gap = repo.get_gap(s, world["gap"].id)
+        journal = repo.latest_journal(s)[0].tomorrow_md
+        assert gap.score_total is not None and gap.last_assessed_run_id == repo.last_run(s).id
+    assert gap.status != "verified"
+    assert "critic skipped" in journal and "strategy skipped" not in journal
+    assert summary.done == 6
+
+
+def test_strategist_sees_only_changed_sectors(world, settings, monkeypatch):
+    seen = {}
+    real = Strategist.collect_inputs
+
+    def spy(self, **kwargs):
+        seen.update(kwargs)
+        return real(self, **kwargs)
+
+    monkeypatch.setattr(Strategist, "collect_inputs", spy)
+    R.run_once(
+        settings,
+        **_kw(
+            world,
+            client=_client(world["gap"].id),
+            runner_factory=fake_runner_factory([_conversation() for _ in range(5)], []),
+        ),
+    )
+    assert seen["sector_slugs"] == ["pets"]
+
+
+def test_strategist_skipped_when_fresh_facts_touch_no_sector(world, settings):
+    later = NOW + timedelta(hours=1)
+    with world["factory"]() as s:
+        repo.upsert_fact(
+            s,
+            FactIn(
+                claim="Kosovo population 1.6m", entity_type="stat", entity_key="pop", confidence=0.9
+            ),
+            run_id=None,
+            observed_at=later,
+        )
+    client = FakeClient([FakeMessage(content=[text_block("Narrative.")])])
+
+    def boom(**kwargs):
+        raise RuntimeError("x")
+
+    R.run_once(
+        settings, **_kw(world, now=later, clock=lambda: later, client=client, runner_factory=boom)
+    )
+    assert not [c for c in client.messages.calls if "output_format" in c]

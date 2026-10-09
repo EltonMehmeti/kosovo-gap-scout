@@ -23,8 +23,8 @@ from scout.llm.gateway import LLM, LLMError
 from scout.sources import apple, play
 from scout.sources.askdata import AskDataClient
 from scout.sources.places import PlacesClient
-from scout.strategy.schemas import DirectorReview
-from scout.strategy.strategist import Strategist
+from scout.strategy.schemas import CriticOutput, DirectorReview
+from scout.strategy.strategist import Strategist, changes_today
 from scout.worker.chart_diff import classify_and_record, run_chart_diff
 from scout.worker.profiles import PROFILES, build_brief, build_system, journal_markdown
 from scout.worker.research import ResearchWorker
@@ -273,6 +273,7 @@ def _run_body(
     deadline = now + timedelta(minutes=settings.run_max_minutes)
     journal_md = journal_markdown(repo.latest_journal(session, limit=3))
     notes: list[str] = []
+    contexts: list[ToolContext] = []
     planned: list = []
     done = failed = 0
     chart_report = None
@@ -403,6 +404,7 @@ def _run_body(
                         profile=task.profile,
                         payload=payload,
                     )
+                    contexts.append(ctx)  # even a failed task may have touched gaps
                     outcome = worker.run(task.id, profile, brief, ctx)
                     result_md, cost = outcome.summary_md, outcome.cost_eur
             except BudgetExceeded:
@@ -453,22 +455,38 @@ def _run_body(
                 stopped_reason = "budget"
                 break
 
-    # 3. judge (only when this run produced new facts)
+    # 3. judge — only the sectors whose facts or gaps changed in this run (spec B2.4/B7)
     changes = []
     strategist = Strategist(llm, session)
     fresh = repo.fresh_facts_since(session, run.started_at, now=clock())
-    if fresh:
+    touched = set().union(*(c.touched_gap_ids for c in contexts))
+    changed_sectors, changed_gaps = changes_today(session, fresh, touched)
+    if fresh and not changed_sectors:
+        notes.append("strategy skipped: no sector changed today")
+    if changed_sectors:
         try:
             inputs = strategist.collect_inputs(
-                since=run.started_at - timedelta(hours=1), now=clock()
+                since=run.started_at - timedelta(hours=1),
+                now=clock(),
+                sector_slugs=changed_sectors,
+                priority_gap_ids=changed_gaps,
             )
             if inputs.gaps or inputs.facts:
                 output = strategist.assess(inputs, today)
-                critic = strategist.critique(output, inputs, today)
-                applied = strategist.apply(output, critic, now=clock(), run_id=run.id)
+                critic_ok = True
+                try:  # a failed Critic must not throw away the Strategist answer already paid for
+                    critic = strategist.critique(output, inputs, today)
+                except (LLMError, BudgetExceeded, anthropic.APIError) as e:
+                    session.rollback()
+                    critic, critic_ok = CriticOutput(verdicts=[]), False
+                    notes.append(f"critic skipped: {type(e).__name__}: {str(e)[:120]}")
+                applied = strategist.apply(
+                    output, critic, now=clock(), run_id=run.id, critic_ok=critic_ok
+                )
                 changes = applied.changes
                 notes.append(
-                    f"strategist: {output.headline}; new gaps {applied.new_gaps}; "
+                    f"strategist ({', '.join(changed_sectors)}; {len(inputs.gaps)} gaps): "
+                    f"{output.headline}; new gaps {applied.new_gaps}; "
                     f"field checks {applied.field_checks_added}"
                 )
         except (LLMError, BudgetExceeded, anthropic.APIError) as e:

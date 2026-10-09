@@ -442,3 +442,11 @@ def test_invalid_verdict_is_stored_as_unknown(ctx):
     _searches(ctx)
     _presence_fact(ctx, gap, verdict="totally absent!!")
     assert _presence_facts(ctx, gap)[0].value["verdict"] == "unknown"
+
+
+def test_tools_record_which_gaps_they_touched(ctx):
+    out = T.kb_propose_gap_impl(ctx, title="Pet sitting", sector="pets", hypothesis="h")
+    gap_id = int(out.split("#")[1].split()[0])
+    T.kb_record_fact_impl(ctx, claim="c", entity_type="gap", entity_key="gap:999", confidence=0.5)
+    T.kb_record_fact_impl(ctx, claim="d", entity_type="stat", entity_key="k", confidence=0.5)
+    assert ctx.touched_gap_ids == {gap_id, 999}

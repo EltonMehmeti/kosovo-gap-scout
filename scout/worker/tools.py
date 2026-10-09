@@ -83,6 +83,7 @@ class ToolContext:
     payload: dict = field(default_factory=dict)  # the task's payload (gap_id for verify-gap)
     places_searches: int = 0  # Places searches that actually returned in this task
     app_store_searches: int = 0  # app-store searches that actually returned in this task
+    touched_gap_ids: set[int] = field(default_factory=set)  # gaps proposed/updated or written about
 
 
 def _clip(text: str, limit: int) -> str:
@@ -200,6 +201,9 @@ def kb_record_fact_impl(
         run_id=ctx.run_id,
         observed_at=ctx.now,
     )
+    key = fact.entity_key
+    if key.startswith("gap:") and key[4:].isdigit():
+        ctx.touched_gap_ids.add(int(key[4:]))
     return f"fact #{fact.id} saved (confidence {fact.confidence:.2f}, expires {fact.expires_at.date()})"
 
 
@@ -330,6 +334,7 @@ def kb_propose_gap_impl(
         why_not_yet_md=why_not_yet,
         run_id=ctx.run_id,
     )
+    ctx.touched_gap_ids.add(gap.id)
     return (
         f"gap #{gap.id} {'(new)' if created else '(existing)'}: {gap.title} [status {gap.status}]"
     )

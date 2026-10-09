@@ -159,6 +159,23 @@ def latest_presence_check(
     return None
 
 
+def fresh_facts_for(
+    session: Session,
+    since: datetime,
+    *,
+    now: datetime,
+    sector_ids: set[int],
+    entity_keys: set[str],
+    limit: int = 400,
+) -> list[Fact]:
+    """Fresh facts in the given sectors, about the given entities (e.g. "gap:12"), or with no sector."""
+    scope = or_(Fact.sector_id.is_(None), Fact.sector_id.in_(sector_ids or {-1}))
+    if entity_keys:
+        scope = or_(scope, Fact.entity_key.in_(entity_keys))
+    stmt = select(Fact).where(Fact.observed_at >= since, Fact.expires_at > now, scope)
+    return list(session.scalars(stmt.order_by(Fact.confidence.desc(), Fact.id).limit(limit)))
+
+
 def has_presence_check(
     session: Session, gap: Gap, *, now: datetime, max_age_days: int = 60
 ) -> bool:

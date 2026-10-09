@@ -533,3 +533,165 @@ def test_critique_ranks_by_rubric_capped_total(db_session, seeded):
     st.critique(out, inputs, TODAY, top_n=1)
     sent = json.loads(client.messages.calls[0]["messages"][0]["content"])
     assert [a["gap_id"] for a in sent["assessments"]] == [g2.id]
+
+
+# ---------- C2: bounded Strategist input, sized output, Critic failure ----------
+
+
+class RecordingGuard(FakeGuard):
+    def __init__(self):
+        super().__init__()
+        self.checks = []
+
+    def check(self, est_eur):
+        self.checks.append(Decimal(est_eur))
+        super().check(est_eur)
+
+
+def _fact(db_session, claim, *, sector=None, key="k", observed_at=NOW, etype="stat"):
+    return repo.upsert_fact(
+        db_session,
+        FactIn(claim=claim, entity_type=etype, entity_key=key, confidence=0.7, sector_slug=sector),
+        run_id=1,
+        observed_at=observed_at,
+    )
+
+
+def test_changes_today_unions_fact_sectors_gap_keyed_facts_and_touched_gaps(db_session, seeded):
+    from scout.strategy.strategist import changes_today
+
+    for slug in ("home-services", "weddings", "tutoring"):
+        repo.get_or_create_sector(db_session, slug, slug)
+    g_home, _ = repo.propose_gap(db_session, title="Cleaners", sector_slug="home-services")
+    g_wed, _ = repo.propose_gap(db_session, title="Venues", sector_slug="weddings")
+    repo.propose_gap(db_session, title="Tutors", sector_slug="tutoring")  # untouched
+    facts = [
+        _fact(db_session, "pets fact", sector="pets"),
+        _fact(db_session, "about cleaners", key=f"gap:{g_home.id}", etype="gap"),
+        _fact(db_session, "country stat"),
+    ]
+    sectors, gap_ids = changes_today(db_session, facts, {g_wed.id})
+    assert sectors == ["home-services", "pets", "weddings"]
+    assert gap_ids == {g_home.id, g_wed.id}
+    assert changes_today(db_session, [_fact(db_session, "country only")], set()) == ([], set())
+
+
+def test_collect_inputs_scopes_to_changed_sectors(db_session, seeded):
+    repo.get_or_create_sector(db_session, "weddings", "Weddings")
+    other, _ = repo.propose_gap(db_session, title="Venues", sector_slug="weddings")
+    _fact(db_session, "wedding fact", sector="weddings")
+    _fact(db_session, "about pet gap", key=f"gap:{seeded.id}", etype="presence_check")
+    st = _strategist(db_session, [])
+    inputs = st.collect_inputs(since=NOW - timedelta(hours=1), now=NOW, sector_slugs=["pets"])
+    assert [g["id"] for g in inputs.gaps] == [seeded.id]
+    claims = {f["claim"] for f in inputs.facts}
+    assert "about pet gap" in claims and "wedding fact" not in claims
+    assert set(inputs.sector_digests) == {"pets"} and other.id not in {g["id"] for g in inputs.gaps}
+
+
+def test_collect_inputs_caps_gaps_touched_then_unscored_then_stalest(db_session, seeded):
+    from scout.db.models import Gap
+    from scout.strategy.strategist import MAX_STRATEGY_GAPS
+
+    ids = [seeded.id]
+    for i in range(24):
+        g, _ = repo.propose_gap(db_session, title=f"Gap {i}", sector_slug="pets")
+        ids.append(g.id)
+    # 20 scored, assessed in runs 100..119 (ids[5:] ; ids[5] is stalest); ids[0:5] unscored
+    for n, gid in enumerate(ids[5:]):
+        g = db_session.get(Gap, gid)
+        g.score_components, g.score_total, g.last_assessed_run_id = {"proof": 1}, 1, 100 + n
+    for gid in ids[:5]:
+        db_session.get(Gap, gid).last_assessed_run_id = None
+    db_session.commit()
+    touched = {ids[-1]}  # most recently assessed, but touched today
+    st = _strategist(db_session, [])
+    inputs = st.collect_inputs(
+        since=NOW - timedelta(hours=1), now=NOW, sector_slugs=["pets"], priority_gap_ids=touched
+    )
+    chosen = {g["id"] for g in inputs.gaps}
+    assert len(chosen) == MAX_STRATEGY_GAPS == 15
+    assert ids[-1] in chosen and set(ids[:5]) <= chosen
+    assert set(ids[5:14]) <= chosen and not (set(ids[14:-1]) & chosen)  # 9 stalest scored
+    assert [g["id"] for g in inputs.gaps] == sorted(chosen)
+
+
+def test_collect_inputs_total_size_is_bounded(db_session, seeded):
+    from scout.strategy.strategist import MAX_INPUT_CHARS
+
+    for i in range(400):
+        _fact(db_session, f"{i} " + "x" * 900, sector="pets", key=f"k{i}")
+    for i in range(30):
+        repo.get_or_create_sector(db_session, f"s{i}", f"S{i}")
+        repo.set_digest(db_session, f"sector:s{i}", "t", "d" * 5000, now=NOW)
+        repo.propose_gap(db_session, title=f"G{i}", sector_slug=f"s{i}", hypothesis_md="h" * 2000)
+    st = _strategist(db_session, [])
+    slugs = ["pets", *(f"s{i}" for i in range(30))]
+    inputs = st.collect_inputs(since=NOW - timedelta(hours=1), now=NOW, sector_slugs=slugs)
+    assert len(st.payload(inputs, TODAY)) <= MAX_INPUT_CHARS
+    assert len(inputs.gaps) == 15 and len(inputs.sector_digests) <= 8 and inputs.facts
+
+
+@pytest.mark.parametrize("n_gaps", [1, 15])
+def test_assess_sizes_max_tokens_and_estimate_from_the_gap_count(db_session, seeded, n_gaps):
+    from scout.strategy.strategist import strategist_max_tokens
+
+    for i in range(n_gaps - 1):
+        repo.propose_gap(db_session, title=f"Gap {i}", sector_slug="pets")
+    out = S.StrategistOutput(assessments=[], new_gaps=[], headline="h")
+    client = FakeClient([FakeMessage(content=[text_block("{}")], parsed_output=out)])
+    guard = RecordingGuard()
+    st = Strategist(LLM(client, guard, Decimal("0.92")), db_session)
+    inputs = st.collect_inputs(since=NOW - timedelta(hours=1), now=NOW, sector_slugs=["pets"])
+    st.assess(inputs, TODAY)
+    call = client.messages.calls[0]
+    assert call["max_tokens"] == strategist_max_tokens(n_gaps) <= 16_000
+    assert strategist_max_tokens(15) >= 15 * 600  # room for thinking + ~200 tokens per assessment
+    # the estimate covers a full-length answer at Opus output prices
+    assert guard.checks[0] >= Decimal(call["max_tokens"]) * Decimal("20") / 1_000_000 * Decimal(
+        "0.92"
+    )
+
+
+def test_critique_has_room_to_answer(db_session, seeded):
+    out = S.StrategistOutput(assessments=[_assessment(seeded.id)], new_gaps=[], headline="h")
+    client = FakeClient(
+        [FakeMessage(content=[text_block("{}")], parsed_output=S.CriticOutput(verdicts=[]))]
+    )
+    st = Strategist(LLM(client, FakeGuard(), Decimal("0.92")), db_session)
+    st.critique(out, st.collect_inputs(since=NOW - timedelta(hours=1), now=NOW), TODAY)
+    assert client.messages.calls[0]["max_tokens"] >= 8192
+
+
+def test_without_critic_scores_cannot_rise_and_first_scores_apply(db_session, seeded):
+    from scout.db.models import Gap
+
+    fresh, _ = repo.propose_gap(db_session, title="Dog walking", sector_slug="pets")
+    g = db_session.get(Gap, seeded.id)
+    g.score_total, g.confidence, g.status = 40, 0.4, "candidate"
+    g.score_components = {"proof": 10, "absence": 10, "demand": 5, "founder_fit": 5, "risk": 10}
+    db_session.commit()
+    st = _strategist(db_session, [])
+    out = S.StrategistOutput(
+        assessments=[_assessment(seeded.id), _assessment(fresh.id)], new_gaps=[], headline="h"
+    )
+    st.apply(out, S.CriticOutput(verdicts=[]), now=NOW, run_id=11, critic_ok=False)
+    g = repo.get_gap(db_session, seeded.id)
+    assert g.score_total == 40 and g.confidence == 0.4 and g.status == "candidate"
+    assert g.score_components["proof"] == 10
+    f = repo.get_gap(db_session, fresh.id)
+    assert f.score_total == 20 + 12 + 15 + 12 + 12 and f.status == "verifying"
+
+
+def test_without_critic_scores_may_fall(db_session, seeded):
+    from scout.db.models import Gap
+
+    g = db_session.get(Gap, seeded.id)
+    g.score_total, g.confidence = 90, 0.9
+    g.score_components = {"proof": 25, "absence": 25, "demand": 20, "founder_fit": 10, "risk": 10}
+    db_session.commit()
+    st = _strategist(db_session, [])
+    out = S.StrategistOutput(assessments=[_assessment(seeded.id)], new_gaps=[], headline="h")
+    st.apply(out, S.CriticOutput(verdicts=[]), now=NOW, run_id=11, critic_ok=False)
+    g = repo.get_gap(db_session, seeded.id)
+    assert g.score_total == 20 + 12 + 15 + 12 + 12 and g.confidence == 0.5
