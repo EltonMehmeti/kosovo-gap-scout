@@ -1,20 +1,59 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}{{ sector.name_en }}{% endblock %}
 {% block content %}
-<p><a href="/knowledge">← Knowledge</a></p>
-<h1>{{ sector.name_en }}</h1>
-<p class="muted">{{ sector.status }} · priority {{ sector.priority }} · presence {{ sector.presence_level or '—' }}</p>
-<h2>Digest {% if digest %}<a class="muted" href="/knowledge/digests/{{ digest.key }}">edit</a>{% endif %}</h2>
-{% if digest %}<div class="card md">{{ digest.body_md | md }}</div>{% else %}<p class="muted">Not mapped yet.</p>{% endif %}
-<h2>Gaps</h2>
-{% for g in gaps %}<div><a href="/gaps/{{ g.id }}">{{ g.title }}</a> <span class="muted">{{ g.status }} · {{ g.score_total }}</span></div>
-{% else %}<p class="muted">None.</p>{% endfor %}
-<h2>Businesses ({{ businesses|length }})</h2>
-{% for b in businesses %}<div class="card"><strong>{{ b.name }}</strong> <span class="muted">{{ b.kind }}{% if b.city %} · {{ b.city }}{% endif %}</span>
-  {% if b.note %}<div>{{ b.note }}</div>{% endif %}</div>
-{% else %}<p class="muted">None.</p>{% endfor %}
-<h2>Proven models ({{ models|length }})</h2>
-{% for m in models %}<div class="card"><strong>{{ m.name }}</strong> — {{ m.description }}
-  <div class="muted">markets: {{ m.markets | join(', ') }} · nearby {{ m.nearby_count }}</div></div>
-{% else %}<p class="muted">None.</p>{% endfor %}
+<a class="back" href="/knowledge">← Knowledge</a>
+{% call ui.page_header(sector.name_en, "What the scout knows about this sector.") %}
+  {{ ui.chip("priority " ~ sector.priority) }}
+  {% if sector.presence_level %}{{ ui.chip(presence_label(sector.presence_level), "gray", "How present this already is in Kosovo") }}{% endif %}
+{% endcall %}
+<section class="card">
+  <div class="card-head">
+    <h2>Digest</h2>
+    {% if digest %}<a class="btn sm" href="/knowledge/digests/{{ digest.key }}">{{ ui.icon("pencil") }}<span>Edit</span></a>{% endif %}
+  </div>
+  {% if digest %}
+  <div class="md prose">{{ digest.body_md | md }}</div>
+  {% else %}
+  {{ ui.empty_state("book-open", "Not mapped yet — the scout writes this digest when it maps the sector.", "/pipeline", "Queue “Map a sector”") }}
+  {% endif %}
+</section>
+<section class="card">
+  <h2>{{ ui.icon("lightbulb") }} Gaps</h2>
+  {% if gaps %}
+  <ul class="list">
+    {% for g in gaps %}
+    <li><a class="grow" href="/gaps/{{ g.id }}">{{ g.title }}</a>{{ ui.status_chip("gap", g.status) }}<span class="muted">score {{ g.score_total }}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No gaps in this sector yet.</p>
+  {% endif %}
+</section>
+<section class="card">
+  <h2>Businesses in Kosovo <span class="muted">({{ businesses | length }})</span></h2>
+  {% if businesses %}
+  <ul class="list">
+    {% for b in businesses %}
+    <li><div class="grow"><strong>{{ b.name }}</strong> <span class="muted">{{ b.kind }}{% if b.city %} · {{ b.city }}{% endif %}</span>
+      {% if b.note %}<div>{{ b.note }}</div>{% endif %}</div></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">None found yet.</p>
+  {% endif %}
+</section>
+<section class="card">
+  <h2>Proven models abroad <span class="muted">({{ models | length }})</span></h2>
+  {% if models %}
+  <ul class="list">
+    {% for m in models %}
+    <li><div class="grow"><strong>{{ m.name }}</strong> — {{ m.description }}
+      <div class="muted">Works in: {{ m.markets | join(", ") or "—" }} · {{ m.nearby_count }} nearby</div></div></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">None found yet.</p>
+  {% endif %}
+</section>
 {% endblock %}
