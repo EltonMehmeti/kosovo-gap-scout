@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Journal{% endblock %}
+{% block content %}
+<h1>Journal</h1>
+{% for e in entries %}
+  <div class="card">
+    <div class="muted">{{ e.day }} · {% if e.run_id %}Run #{{ e.run_id }}{% else %}Founder{% endif %}</div>
+    {% if e.did_md %}<div class="md"><strong>Did</strong>{{ e.did_md | md }}</div>{% endif %}
+    {% if e.learned_md %}<div class="md"><strong>Learned</strong>{{ e.learned_md | md }}</div>{% endif %}
+    {% if e.tomorrow_md %}<div class="md"><strong>Tomorrow</strong>{{ e.tomorrow_md | md }}</div>{% endif %}
+  </div>
+{% else %}<div class="card">Nothing yet.</div>{% endfor %}
+{% endblock %}

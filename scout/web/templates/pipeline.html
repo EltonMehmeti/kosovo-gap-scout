@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Pipeline{% endblock %}
+{% block content %}
+<h1>Pipeline</h1>
+
+<h2>Add a task</h2>
+<form class="card" method="post" action="/tasks">
+  <div class="row">
+    <select name="profile" required>{% for p in profiles %}<option value="{{ p }}">{{ p }}</option>{% endfor %}</select>
+    <select name="sector"><option value="">(no sector)</option>{% for s in sectors %}<option value="{{ s.slug }}">{{ s.name_en }}</option>{% endfor %}</select>
+    <input name="gap_id" inputmode="numeric" placeholder="gap id" size="6">
+    <input name="theme" placeholder="culture theme" size="14">
+    <input name="priority" inputmode="numeric" value="70" size="4" aria-label="priority">
+    <button class="primary">Queue</button>
+  </div>
+  <div class="muted">map-sector/hunt-models take a sector; verify-gap/deep-dive take a gap id; culture takes a theme.</div>
+</form>
+
+<h2>Queue ({{ queue|length }})</h2>
+{% for t in queue %}
+  <div class="card">#{{ t.id }} <strong>{{ t.profile }}</strong> · prio {{ t.priority }} · est €{{ t.est_cost_eur }}
+    <div class="muted">{{ t.payload }}</div></div>
+{% else %}<p class="muted">Empty.</p>{% endfor %}
+
+<h2>Last run</h2>
+{% if last %}
+  <div class="card">#{{ last.id }} · {{ last.day }} · {{ last.phase }} · {{ last.status }}
+    · cap €{{ last.budget_cap_eur }} · spent €{{ last.spent_eur }} · done {{ last.tasks_done }} · failed {{ last.tasks_failed }}</div>
+  {% for t in last_tasks %}
+    <details class="card"><summary>#{{ t.id }} {{ t.profile }} · {{ t.status }} · €{{ t.actual_cost_eur }}</summary>
+      {% if t.error %}<pre style="white-space:pre-wrap">{{ t.error }}</pre>{% endif %}
+      <div class="md">{{ t.result_md | md }}</div>
+    </details>
+  {% endfor %}
+{% else %}<p class="muted">No runs yet.</p>{% endif %}
+
+<h2>Failures</h2>
+{% for t in failed %}
+  <div class="card">#{{ t.id }} <strong>{{ t.profile }}</strong> · attempts {{ t.attempts }}
+    <pre style="white-space:pre-wrap">{{ t.error }}</pre>
+    <form class="inline" method="post" action="/tasks/{{ t.id }}/retry"><button>Retry</button></form>
+  </div>
+{% else %}<p class="muted">None.</p>{% endfor %}
+
+<h2>Recent runs</h2>
+<table>
+  <tr><th>#</th><th>day</th><th>phase</th><th>status</th><th>cap</th><th>spent</th><th>done</th><th>failed</th></tr>
+  {% for r in runs %}
+  <tr><td>{{ r.id }}</td><td>{{ r.day }}</td><td>{{ r.phase }}</td><td>{{ r.status }}</td>
+      <td>€{{ r.budget_cap_eur }}</td><td>€{{ r.spent_eur }}</td><td>{{ r.tasks_done }}</td><td>{{ r.tasks_failed }}</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}
