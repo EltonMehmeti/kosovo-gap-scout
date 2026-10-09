@@ -307,3 +307,30 @@ def test_model_strings_are_fitted_to_column_widths(ctx):
     assert T.kb_write_digest_impl(
         ctx, key="culture:" + "x" * 200, title="t" * 300, body_md="b"
     ).startswith("digest")
+
+
+def test_unknown_sector_slugs_are_rejected_with_the_valid_list(ctx):
+    from sqlalchemy import func, select
+
+    from scout.db.models import Sector
+
+    before = ctx.session.scalar(select(func.count()).select_from(Sector))
+    calls = [
+        lambda: T.kb_search_impl(ctx, query="x", sector="pet"),
+        lambda: T.kb_record_fact_impl(
+            ctx, claim="c", entity_type="stat", entity_key="k", confidence=0.5, sector="pet"
+        ),
+        lambda: T.kb_record_business_impl(ctx, name="B", sector="pet"),
+        lambda: T.kb_record_proven_model_impl(
+            ctx, slug="s", name="n", sector="pet", description="d", markets_json="[]"
+        ),
+        lambda: T.kb_propose_gap_impl(ctx, title="t", sector="pet", hypothesis="h"),
+        lambda: T.kb_write_digest_impl(ctx, key="sector:pet", title="t", body_md="b"),
+    ]
+    for call in calls:
+        out = call()
+        assert out.startswith("error: unknown sector 'pet'"), out
+        assert "pets" in out
+    assert ctx.session.scalar(select(func.count()).select_from(Sector)) == before
+    # empty sector stays optional where it was optional
+    assert T.kb_search_impl(ctx, query="x") == "no facts yet"

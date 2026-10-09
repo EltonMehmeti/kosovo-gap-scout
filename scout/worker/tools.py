@@ -110,10 +110,22 @@ def _business_kind(raw: str) -> str | None:
     return word if word in BUSINESS_KINDS else None
 
 
+def _unknown_sector(ctx: ToolContext, sector: str) -> str | None:
+    """Error text when a non-empty sector slug is not one of the seeded sectors (a typo must not
+    create a new sector that the planner would then pay to map); None when it is fine."""
+    slug = sector.strip()
+    if not slug or repo.get_sector(ctx.session, slug) is not None:
+        return None
+    valid = ", ".join(s.slug for s in repo.list_sectors(ctx.session))
+    return f"error: unknown sector {slug!r}; use one of: {valid}"
+
+
 # ---------- knowledge base ----------
 
 
 def kb_search_impl(ctx: ToolContext, query: str, sector: str = "") -> str:
+    if err := _unknown_sector(ctx, sector):
+        return err
     sector_slug = _or_none(sector)
     lines: list[str] = []
     if sector_slug:
@@ -144,6 +156,8 @@ def kb_record_fact_impl(
         return f"error: entity_type must be one of {', '.join(FACT_ENTITY_TYPES)}"
     if not claim.strip():
         return "error: claim is empty"
+    if err := _unknown_sector(ctx, sector):
+        return err
     value = None
     if value_json.strip():
         try:
@@ -184,6 +198,8 @@ def kb_record_business_impl(
     norm_kind = _business_kind(kind)
     if norm_kind is None:
         return f"error: kind must be one of {', '.join(BUSINESS_KINDS)} (got {kind!r})"
+    if err := _unknown_sector(ctx, sector):
+        return err
     channels = {
         k: v.strip()
         for k, v in (("instagram", instagram), ("website", website), ("facebook", facebook))
@@ -221,6 +237,10 @@ def kb_record_proven_model_impl(
         isinstance(m, dict) and m.get("country") for m in markets
     ):
         return 'error: markets_json must be a list of {"country": "HR", "example": "...", "url": "..."}'
+    if not sector.strip():
+        return "error: sector is required"
+    if err := _unknown_sector(ctx, sector):
+        return err
     pm = repo.upsert_proven_model(
         ctx.session,
         slug=repo.slugify(slug)[:W_PM_SLUG].strip("-"),
@@ -247,6 +267,8 @@ def kb_propose_gap_impl(
         return f"error: presence_level must be one of {', '.join(PRESENCE_LEVELS)}"
     if not title.strip() or not sector.strip():
         return "error: title and sector are required"
+    if err := _unknown_sector(ctx, sector):
+        return err
     gap, created = repo.propose_gap(
         ctx.session,
         title=_fit(title, W_TITLE),
@@ -266,6 +288,8 @@ def kb_write_digest_impl(ctx: ToolContext, key: str, title: str, body_md: str) -
     key = _fit(key, W_DIGEST_KEY)
     if not (key == "country" or key.startswith(("sector:", "culture:"))):
         return f"error: key must be 'country', 'sector:<slug>' or 'culture:<theme>' (got {key!r})"
+    if key.startswith("sector:") and (err := _unknown_sector(ctx, key.removeprefix("sector:"))):
+        return err
     body = body_md.strip()[:DIGEST_CHAR_LIMIT]
     repo.set_digest(ctx.session, key, _fit(title, W_TITLE) or key, body, now=ctx.now)
     return f"digest {key} saved ({len(body)} chars; limit {DIGEST_CHAR_LIMIT})"
