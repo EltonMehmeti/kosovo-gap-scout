@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -76,8 +77,37 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _or_none(value: str) -> str | None:
-    return value.strip() or None
+def _or_none(value: str, width: int | None = None) -> str | None:
+    value = value.strip()
+    if width is not None:
+        value = value[:width]
+    return value or None
+
+
+def _fit(value: str, width: int) -> str:
+    """Trim a model-supplied string to its column width (a too-long value would abort the transaction)."""
+    return value.strip()[:width]
+
+
+# column widths from scout/db/models.py
+W_NAME, W_KIND, W_CITY, W_TITLE, W_ENTITY_KEY, W_PM_SLUG, W_DIGEST_KEY = (
+    200,
+    20,
+    80,
+    200,
+    160,
+    120,
+    120,
+)
+BUSINESS_KINDS = ("local", "foreign", "nearby")
+_KIND_ALIASES = {"neighbour": "nearby", "neighbor": "nearby", "regional": "nearby"}
+
+
+def _business_kind(raw: str) -> str | None:
+    """Normalise the model's kind: first word, lower-case, aliases mapped; None when unrecognised."""
+    word = re.split(r"[^a-z]+", (raw or "local").strip().lower(), maxsplit=1)[0] or "local"
+    word = _KIND_ALIASES.get(word, word)
+    return word if word in BUSINESS_KINDS else None
 
 
 # ---------- knowledge base ----------
@@ -125,7 +155,7 @@ def kb_record_fact_impl(
         FactIn(
             claim=claim,
             entity_type=entity_type,
-            entity_key=entity_key.strip(),
+            entity_key=_fit(entity_key, W_ENTITY_KEY),
             confidence=min(max(float(confidence), 0.0), 1.0),
             source_url=_or_none(source_url),
             sector_slug=_or_none(sector),
@@ -151,6 +181,9 @@ def kb_record_business_impl(
 ) -> str:
     if not name.strip() or not sector.strip():
         return "error: name and sector are required"
+    norm_kind = _business_kind(kind)
+    if norm_kind is None:
+        return f"error: kind must be one of {', '.join(BUSINESS_KINDS)} (got {kind!r})"
     channels = {
         k: v.strip()
         for k, v in (("instagram", instagram), ("website", website), ("facebook", facebook))
@@ -158,10 +191,10 @@ def kb_record_business_impl(
     }
     b = repo.upsert_business(
         ctx.session,
-        name=name,
+        name=_fit(name, W_NAME),
         sector_slug=sector.strip(),
-        kind=kind or "local",
-        city=_or_none(city),
+        kind=norm_kind,
+        city=_or_none(city, W_CITY),
         channels=channels,
         note=_or_none(note),
         seen_at=ctx.now,
@@ -190,8 +223,8 @@ def kb_record_proven_model_impl(
         return 'error: markets_json must be a list of {"country": "HR", "example": "...", "url": "..."}'
     pm = repo.upsert_proven_model(
         ctx.session,
-        slug=repo.slugify(slug),
-        name=name,
+        slug=repo.slugify(slug)[:W_PM_SLUG].strip("-"),
+        name=_fit(name, W_NAME),
         sector_slug=sector.strip(),
         description=description,
         markets=markets,
@@ -216,9 +249,9 @@ def kb_propose_gap_impl(
         return "error: title and sector are required"
     gap, created = repo.propose_gap(
         ctx.session,
-        title=title,
+        title=_fit(title, W_TITLE),
         sector_slug=sector.strip(),
-        proven_model_slug=_or_none(proven_model_slug),
+        proven_model_slug=_or_none(proven_model_slug, W_PM_SLUG),
         hypothesis_md=hypothesis,
         presence_level=presence_level,
         why_not_yet_md=why_not_yet,
@@ -230,11 +263,11 @@ def kb_propose_gap_impl(
 
 
 def kb_write_digest_impl(ctx: ToolContext, key: str, title: str, body_md: str) -> str:
-    key = key.strip()
+    key = _fit(key, W_DIGEST_KEY)
     if not (key == "country" or key.startswith(("sector:", "culture:"))):
         return f"error: key must be 'country', 'sector:<slug>' or 'culture:<theme>' (got {key!r})"
     body = body_md.strip()[:DIGEST_CHAR_LIMIT]
-    repo.set_digest(ctx.session, key, title.strip() or key, body, now=ctx.now)
+    repo.set_digest(ctx.session, key, _fit(title, W_TITLE) or key, body, now=ctx.now)
     return f"digest {key} saved ({len(body)} chars; limit {DIGEST_CHAR_LIMIT})"
 
 
@@ -327,6 +360,10 @@ def _run(ctx: ToolContext, tool_name: str, fn: Callable, /, **kwargs) -> str:
     try:
         out = fn(ctx, **kwargs)
     except Exception as e:  # noqa: BLE001 — tool errors go back to the model as text
+        # A failed statement aborts the Postgres transaction; roll back so the next cost record,
+        # tool call or task write runs on a usable session (otherwise: PendingRollbackError).
+        if ctx.session is not None:
+            ctx.session.rollback()
         out = f"error: {type(e).__name__}: {str(e)[:300]}"
     ctx.events.append({"tool": tool_name, "chars": len(out), "error": out.startswith("error:")})
     return out

@@ -254,3 +254,56 @@ def test_every_built_tool_succeeds_through_its_real_call_path(ctx):
     assert repo.list_businesses(ctx.session, "pets")[0].name == "PetShop KS"
     gap = repo.get_gap_by_title(ctx.session, "pets", "Pet sitting marketplace")
     assert gap is not None and gap.proven_model_id is not None
+
+
+def test_db_error_in_a_tool_rolls_back_so_cost_records_still_work(ctx, monkeypatch):
+    from sqlalchemy import text
+
+    from scout.db.repo import CostRecord
+
+    def broken_upsert(session, **kwargs):
+        session.execute(text("SELECT 1/0"))  # a real Postgres error: the transaction is aborted
+
+    monkeypatch.setattr(T.repo, "upsert_business", broken_upsert)
+    tool = next(t for t in T.build_tools(ctx) if t.name == "kb_record_business")
+    out = tool.call({"name": "PetShop KS", "sector": "pets"})
+    assert out.startswith("error: DataError")
+    # the session must be usable again: the next paid message is recorded and tools keep working
+    ctx.guard.record(
+        CostRecord("llm", "anthropic", "claude-sonnet-5-5", {}, Decimal("0.02"), task_id=None)
+    )
+    assert repo.spent_on(ctx.session, DAY) == Decimal("0.020000")
+    assert T.kb_search_impl(ctx, query="pets") == "no facts yet"
+
+
+def test_model_strings_are_fitted_to_column_widths(ctx):
+    out = T.kb_record_business_impl(
+        ctx, name="N" * 300, sector="pets", kind="local (Instagram-only)", city="C" * 200
+    )
+    assert out.startswith("business #")
+    b = repo.list_businesses(ctx.session, "pets")[0]
+    assert b.kind == "local" and len(b.name) == 200 and len(b.city) == 80
+    assert T.kb_record_business_impl(ctx, name="X", sector="pets", kind="cousin").startswith(
+        "error: kind must be one of"
+    )
+    assert T.kb_record_business_impl(ctx, name="Y", sector="pets", kind="Neighbour").startswith(
+        "business #"
+    )
+    assert repo.list_businesses(ctx.session, "pets")[-1].kind == "nearby"
+    assert T.kb_propose_gap_impl(ctx, title="T" * 400, sector="pets", hypothesis="h").startswith(
+        "gap #"
+    )
+    assert T.kb_record_fact_impl(
+        ctx, claim="c", entity_type="stat", entity_key="k" * 400, confidence=0.5
+    ).startswith("fact #")
+    assert T.kb_record_proven_model_impl(
+        ctx,
+        slug="s" * 300,
+        name="M" * 300,
+        sector="pets",
+        description="d",
+        markets_json='[{"country": "HR"}]',
+    ).startswith("proven model")
+    assert T.kb_write_digest_impl(
+        ctx, key="culture:" + "x" * 200, title="t" * 300, body_md="b"
+    ).startswith("digest")
