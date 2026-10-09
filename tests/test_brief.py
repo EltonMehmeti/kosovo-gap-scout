@@ -1,6 +1,8 @@
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
+import anthropic
+import httpx
 import pytest
 
 from scout.db import repo
@@ -115,3 +117,46 @@ def test_narrative_failure_is_tolerated(db_session, run):
         db_session, LLM(client, FakeGuard(), Decimal("0.92")), run, today=TODAY, now=NOW, changes=[]
     )
     assert "Something important" in md and "## What it learned" in md
+    assert repo.latest_brief(db_session).markdown == md
+
+
+def test_api_error_still_saves_brief(db_session, run):
+    repo.upsert_fact(
+        db_session,
+        FactIn(claim="Something important", entity_type="news", entity_key="k", confidence=0.9),
+        run_id=run.id,
+        observed_at=NOW,
+    )
+    err = anthropic.APIConnectionError(request=httpx.Request("POST", "https://x"))
+    client = FakeClient([err])
+    md = B.write_brief(
+        db_session, LLM(client, FakeGuard(), Decimal("0.92")), run, today=TODAY, now=NOW, changes=[]
+    )
+    assert "Something important" in md
+    assert repo.latest_brief(db_session).markdown == md
+
+
+def test_spend_reflects_narrative_cost(db_session, run):
+    repo.upsert_fact(
+        db_session,
+        FactIn(claim="Something important", entity_type="news", entity_key="k", confidence=0.9),
+        run_id=run.id,
+        observed_at=NOW,
+    )
+    client = FakeClient([FakeMessage(content=[text_block("Opening.")])])
+    orig = client.messages.create
+
+    def create(**kw):
+        repo.record_cost(
+            db_session,
+            CostRecord("llm", "anthropic", "claude-sonnet-5-5", {}, Decimal("0.40")),
+            day=TODAY,
+            run_id=run.id,
+        )
+        return orig(**kw)
+
+    client.messages.create = create
+    md = B.write_brief(
+        db_session, LLM(client, FakeGuard(), Decimal("0.92")), run, today=TODAY, now=NOW, changes=[]
+    )
+    assert "today €0.71" in md and "month to date €0.71" in md

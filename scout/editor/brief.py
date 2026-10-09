@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal
+
+import anthropic
 
 from scout.budget.guard import BudgetExceeded
 from scout.db import repo
@@ -141,8 +143,13 @@ def write_brief(
                 effort="low",
                 est_eur=Decimal("0.03"),
             ).text
-        except (LLMError, BudgetExceeded):
+        except (LLMError, BudgetExceeded, anthropic.APIError):
             narrative = ""
+        inputs = replace(
+            inputs,
+            spent_today=repo.spent_on(session, today),
+            spent_mtd=repo.spent_between(session, today.replace(day=1), today),
+        )
     md = render_brief(inputs, narrative)
     repo.save_brief(session, run_id=run.id, day=today, markdown=md)
     return md
