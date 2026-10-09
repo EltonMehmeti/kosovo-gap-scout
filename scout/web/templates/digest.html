@@ -1,14 +1,22 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}{{ digest.title }}{% endblock %}
 {% block content %}
-<p><a href="/knowledge">← Knowledge</a></p>
-<h1>{{ digest.title }}</h1>
-<p class="muted">{{ digest.key }} · updated {{ digest.updated_at.strftime('%Y-%m-%d %H:%M') }} · ~{{ digest.token_estimate }} tokens</p>
-<div class="card md">{{ digest.body_md | md }}</div>
-<h2>Edit</h2>
-<form method="post" action="/knowledge/digests/{{ digest.key }}">
-  <textarea name="body_md" style="min-height:20em">{{ digest.body_md }}</textarea>
-  <button class="primary">Save</button>
-  <span class="muted">The scout reads this digest in every task on this sector; your edit is journaled.</span>
-</form>
+<a class="back" href="/knowledge">← Knowledge</a>
+{% call ui.page_header(digest.title, "The scout's notes on this topic. It reads them before every task here, so your edits steer it.") %}
+  <button type="button" class="btn js-only" data-open="#edit">{{ ui.icon("pencil") }}<span>Edit</span></button>
+{% endcall %}
+<p class="muted">{{ digest.key }} · updated {{ ui.date(digest.updated_at) }} · about {{ digest.token_estimate }} tokens</p>
+<article class="card"><div class="md prose">{{ digest.body_md | md }}</div></article>
+<details class="card" id="edit">
+  <summary>Edit this digest</summary>
+  <form method="post" action="/knowledge/digests/{{ digest.key }}">
+    <label class="sr-only" for="body_md">Digest text (Markdown)</label>
+    <textarea id="body_md" name="body_md" rows="18">{{ digest.body_md }}</textarea>
+    <div class="form-foot">
+      <button class="btn primary">Save</button>
+      <span class="hint">Markdown. Your edit is journaled.</span>
+    </div>
+  </form>
+</details>
 {% endblock %}

@@ -1,38 +1,69 @@
 {% extends "base.html" %}
-{% block title %}Costs{% endblock %}
+{% import "_ui.html" as ui with context %}
+{% block title %}Budget & costs{% endblock %}
 {% block content %}
-<h1>Costs</h1>
-<div class="card">
-  Today ({{ day }}): <strong>€{{ spent_today }}</strong> of cap €{{ cap }}
-  {% if founder_cap is not none %}<span class="badge">your cap</span>{% endif %}
-  · month to date <strong>€{{ spent_month }}</strong>
+{{ ui.page_header("Budget & costs", "What the scout spends on AI and data, and today's spending limit.") }}
+<div class="grid-2">
+  <section class="card">
+    <h2>{{ ui.icon("euro") }} Today's limit</h2>
+    <p><span class="big-num">{{ cap | eur }}</span> <span class="muted">from {{ cap_source }}</span></p>
+    <form method="post" action="/costs/cap" class="form-foot">
+      <label for="eur">Your cap for today (€0–{{ max_cap }})</label>
+      <input id="eur" name="eur" inputmode="decimal" size="6" value="{{ founder_cap if founder_cap is not none else '' }}">
+      <button class="btn primary">Save</button>
+    </form>
+    {% if founder_cap is not none %}<div class="form-foot">{{ ui.post_button("/costs/cap", "Clear my cap", {"eur": ""}, "sm ghost", "x") }}</div>{% endif %}
+    <p class="hint">Applies to runs started today. The daily run starts at 07:00 Kosovo time in winter (08:00 in summer), so setting it after the morning run only affects a manual run.</p>
+  </section>
+  <section class="card">
+    <h2>{{ ui.icon("trending-up") }} Spend</h2>
+    <p>Today <strong>{{ spent_today | eur }}</strong> · This month <strong>{{ spent_month | eur }}</strong></p>
+    <div class="bars" role="img" aria-label="Spend per day over the last 14 days">
+      {% for d, cost in bars %}
+      <div class="bar-col{{ ' today' if d == day }}" title="{{ d | iso }}: {{ cost | eur }}">
+        <span class="bar-track"><span class="bar" style="height:{{ ((cost / bar_max * 100) if bar_max else 0) | round(1) }}%"></span></span>
+        <span class="bar-label">{{ d.day }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
 </div>
-<form class="card row" method="post" action="/costs/cap">
-  <label for="eur">Cap for today (€0–{{ max_cap }}, blank clears)</label>
-  <input id="eur" name="eur" inputmode="decimal" size="6" value="{{ founder_cap if founder_cap is not none else '' }}">
-  <button class="primary">Set</button>
-  <span class="muted">Applies to runs started today. The daily run starts at
-    07:00 Kosovo time in winter (08:00 in summer), so setting it after the morning run only affects a manual run.</span>
-</form>
-<h2>This month by model</h2>
-<table>
-  <tr><th>kind</th><th>provider</th><th>model</th><th>calls</th><th>€</th></tr>
-  {% for kind, provider, model, n, eur in per_model %}
-  <tr><td>{{ kind }}</td><td>{{ provider }}</td><td>{{ model or '—' }}</td><td>{{ n }}</td><td>{{ '%.4f'|format(eur) }}</td></tr>
-  {% else %}<tr><td colspan="5" class="muted">No spend yet.</td></tr>{% endfor %}
-</table>
-<h2>Last 30 days</h2>
-<table>
-  <tr><th>day</th><th>€</th></tr>
-  {% for d, eur in per_day %}<tr><td>{{ d }}</td><td>{{ '%.4f'|format(eur) }}</td></tr>
-  {% else %}<tr><td colspan="2" class="muted">No spend yet.</td></tr>{% endfor %}
-</table>
-<h2>Source health</h2>
-<table>
-  <tr><th>tier</th><th>source</th><th>enabled</th><th>last ok</th><th>failures</th></tr>
-  {% for s in sources %}
-  <tr><td>{{ s.tier }}</td><td>{{ s.name }}</td><td>{{ 'yes' if s.enabled else 'no' }}</td>
-      <td>{{ s.last_ok_at.strftime('%Y-%m-%d') if s.last_ok_at else '—' }}</td><td>{{ s.failure_count }}</td></tr>
-  {% else %}<tr><td colspan="5" class="muted">No sources.</td></tr>{% endfor %}
-</table>
+
+<section class="card">
+  <h2>This month by model</h2>
+  {% if per_model %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>What</th><th>Provider</th><th>Model</th><th class="num">Calls</th><th class="num">Cost</th></tr></thead>
+      <tbody>
+        {% for kind, provider, model, n, cost in per_model %}
+        <tr><td>{{ kind }}</td><td>{{ provider }}</td><td>{{ model or "—" }}</td><td class="num">{{ n }}</td><td class="num">{{ cost | eur }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  {{ ui.empty_state("euro", "No spend yet this month.") }}
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Data sources</h2>
+  {% if sources %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Source</th><th>Tier</th><th>Status</th><th>Last worked</th><th class="num">Failures</th></tr></thead>
+      <tbody>
+        {% for s in sources %}
+        <tr><td>{{ s.name }}</td><td>{{ s.tier }}</td>
+          <td>{% if s.enabled %}{{ ui.chip("On", "green") }}{% else %}{{ ui.chip("Off") }}{% endif %}</td>
+          <td>{{ ui.date(s.last_ok_at) }}</td><td class="num">{{ s.failure_count }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No sources yet — run “scout seed” once.</p>
+  {% endif %}
+</section>
 {% endblock %}

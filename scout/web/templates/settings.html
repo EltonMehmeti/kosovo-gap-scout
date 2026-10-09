@@ -1,34 +1,76 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}Settings{% endblock %}
 {% block content %}
-<h1>Settings</h1>
-<h2>Phase</h2>
-<form class="card row" method="post" action="/settings/phase">
-  <select name="phase">{% for p in phases %}<option value="{{ p }}" {{ 'selected' if p == phase else '' }}>{{ p }}</option>{% endfor %}</select>
-  <button class="primary">Save</button>
-  <span class="muted">current: {{ phase }}</span>
-</form>
-<h2>Finalists</h2>
-{% for g in finalist_gaps %}
-  <div class="card row"><a href="/gaps/{{ g.id }}">{{ g.title }}</a> <span class="muted">{{ g.status }} · {{ g.score_total }}</span>
-    <form class="inline" method="post" action="/gaps/{{ g.id }}/finalist"><input type="hidden" name="next" value="/settings"><button>Remove</button></form></div>
-{% else %}<p class="muted">None chosen yet. Use “Finalist” on the Gaps page.</p>{% endfor %}
-<h2>Verify requests</h2>
-{% for g in flagged_gaps %}
-  <div class="card row"><a href="/gaps/{{ g.id }}">{{ g.title }}</a>
-    <form class="inline" method="post" action="/gaps/{{ g.id }}/flag"><input type="hidden" name="next" value="/settings"><input type="hidden" name="unflag" value="1"><button>Withdraw</button></form></div>
-{% else %}<p class="muted">None.</p>{% endfor %}
-<h2>Sector priorities</h2>
-<table>
-  {% for s in sectors %}
-  <tr><td>{{ s.name_en }}</td><td>
-    <form class="inline" method="post" action="/settings/sector-priority">
-      <input type="hidden" name="slug" value="{{ s.slug }}">
-      <input name="priority" value="{{ s.priority }}" size="3" inputmode="numeric" aria-label="priority for {{ s.name_en }}">
-      <button>Save</button>
-    </form></td></tr>
-  {% endfor %}
-</table>
-<h2>Environment (set on Render)</h2>
-<table>{% for k, v in env.items() %}<tr><th>{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}</table>
+{{ ui.page_header("Settings", "How the scout works: its phase, which sectors come first, and your shortlists.") }}
+{% set current = phase_info(phase) %}
+<section class="card">
+  <h2>{{ ui.icon("target") }} Phase</h2>
+  <p>Now: <strong>{{ current.text }}</strong> — {{ current.tip }}.</p>
+  <form method="post" action="/settings/phase" class="form-foot">
+    <label class="sr-only" for="phase">Switch phase</label>
+    <select id="phase" name="phase">
+      {% for p in phases %}{% set info = phase_info(p) %}<option value="{{ p }}"{% if p == phase %} selected{% endif %}>{{ info.text }} — {{ info.tip }}</option>{% endfor %}
+    </select>
+    <button class="btn primary">Switch phase</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>{{ ui.icon("trending-up") }} Sector priorities</h2>
+  <p class="hint">0–100. The scout researches higher-priority sectors first.</p>
+  {% if sectors %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Sector</th><th class="num">Priority</th></tr></thead>
+      <tbody>
+        {% for s in sectors %}
+        <tr>
+          <td>{{ s.name_en }}</td>
+          <td class="num">
+            <form class="inline" method="post" action="/settings/sector-priority">
+              <input type="hidden" name="slug" value="{{ s.slug }}">
+              <input name="priority" value="{{ s.priority }}" inputmode="numeric" size="3" aria-label="Priority for {{ s.name_en }}">
+              <button class="btn sm">Save</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  {{ ui.empty_state("book-open", "No sectors yet — run “scout seed” once to add them.") }}
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>{{ ui.icon("star") }} Your lists</h2>
+  <h3>Finalists</h3>
+  {% if finalist_gaps %}
+  <ul class="list">
+    {% for g in finalist_gaps %}
+    <li><a class="grow" href="/gaps/{{ g.id }}">{{ g.title }}</a>{{ ui.status_chip("gap", g.status) }}{{ ui.post_button("/gaps/%d/finalist" | format(g.id), "Remove", {"next": "/settings"}, "sm") }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No finalists yet — use “Make finalist” on a gap.</p>
+  {% endif %}
+  <h3>Checks you requested</h3>
+  {% if flagged_gaps %}
+  <ul class="list">
+    {% for g in flagged_gaps %}
+    <li><a class="grow" href="/gaps/{{ g.id }}">{{ g.title }}</a>{{ ui.status_chip("gap", g.status) }}{{ ui.post_button("/gaps/%d/flag" | format(g.id), "Cancel check", {"next": "/settings", "unflag": "1"}, "sm") }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">None — use “Check this again” on a gap to have the scout re-check it.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>{{ ui.icon("settings") }} Environment</h2>
+  <p class="hint">Set on Render; shown here read-only.</p>
+  <dl class="kv">{% for k, v in env.items() %}<dt>{{ k }}</dt><dd>{{ v }}</dd>{% endfor %}</dl>
+</section>
 {% endblock %}

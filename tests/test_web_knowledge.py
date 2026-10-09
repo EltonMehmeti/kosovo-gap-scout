@@ -93,3 +93,43 @@ def test_settings_phase_priority_and_finalists(web, db_session):
         follow_redirects=False,
     )
     assert "err=" in bad.headers["location"]
+
+
+def test_empty_knowledge_and_settings_explain_themselves(web):
+    assert "No sectors yet" in web.get("/knowledge").text
+    assert "No facts match" in web.get("/knowledge", params={"q": "zzz"}).text
+    settings = web.get("/settings").text
+    assert "No finalists yet" in settings and "Foundation" in settings
+    assert "building the knowledge base" in settings
+    assert '<a href="/costs">Budget &amp; costs</a>' in settings  # section tab
+
+
+def test_knowledge_cards_and_digest_editor(web, db_session):
+    seed_all(db_session)
+    repo.set_digest(db_session, "sector:pets", "Pets", "## Vets", now=NOW)
+    html = web.get("/knowledge").text
+    assert 'href="/knowledge/sectors/pets"' in html and "not mapped yet" in html
+    assert "data-search" in html
+    digest = web.get("/knowledge/digests/sector:pets").text
+    assert 'data-open="#edit"' in digest and '<details class="card" id="edit">' in digest
+    assert 'action="/knowledge/digests/sector:pets"' in digest
+
+
+def test_costs_chart_cap_source_and_clear(web, db_session):
+    from scout.clock import local_today
+
+    html = web.get("/costs").text
+    assert html.count('class="bar-col') == 14
+    assert "Foundation phase cap" in html and "Clear my cap" not in html
+    founder.set_today_cap(db_session, "1.25", today=local_today("Europe/Belgrade"))
+    html = web.get("/costs").text
+    assert "your cap for today" in html and "Clear my cap" in html and "€1.25" in html
+
+
+def test_settings_lists_use_plain_buttons(web, db_session):
+    seed_all(db_session)
+    g, _ = repo.propose_gap(db_session, title="Pet sitting", sector_slug="pets")
+    founder.toggle_finalist(db_session, g.id, today=date(2026, 10, 9))
+    founder.flag_gap(db_session, g.id, today=date(2026, 10, 9))
+    html = web.get("/settings").text
+    assert "Remove" in html and "Cancel check" in html and "New idea" in html
