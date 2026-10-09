@@ -101,3 +101,16 @@ def test_journal_markdown_limits_size():
 def test_unknown_profile_payload_type_rejected():
     with pytest.raises(TypeError):
         P.build_brief(P.PROFILES["culture"], ["not", "a", "dict"], date(2026, 10, 19))
+
+
+def test_verify_gap_brief_pins_the_keys_the_verified_gate_reads():
+    brief = P.build_brief(
+        P.PROFILES["verify-gap"],
+        {"gap_id": 12, "gap_title": "Pet sitting", "sector": "pets"},
+        date(2026, 10, 19),
+        journal_md="",
+        sector_digest="",
+        gaps_md="",
+    )
+    assert 'payment_path fact with entity_key "gap:12"' in brief
+    assert brief.count('"gap:12"') == 2  # presence_check and payment_path both keyed to the gap

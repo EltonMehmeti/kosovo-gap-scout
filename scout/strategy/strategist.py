@@ -3,19 +3,30 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
+from scout.budget.pricing import llm_cost_usd, to_eur
 from scout.db import repo
 from scout.db.models import GapAssessment as GapAssessmentRow
 from scout.llm.gateway import LLM
 from scout.strategy import schemas as S
-from scout.strategy.rubric import RUBRIC_TEXT, needs_field_check, score_gap
+from scout.strategy.rubric import PRESENCE_CAP, RUBRIC_TEXT, needs_field_check, score_gap
 
 MAX_FACTS_CHARS = 90_000  # ≈ 25k tokens
+# C2: the Strategist judges only what changed, a bounded number of gaps, in a bounded prompt.
+MAX_STRATEGY_GAPS = 15
+MAX_DIGESTS = 8
+DIGEST_CHARS = 3000
+MAX_INPUT_CHARS = 150_000  # whole user payload, ≈ 40–50k tokens
+OPUS = "claude-opus-5-5"
+CRITIC_MAX_TOKENS = 8192
 VERIFIED_CHECK_MAX_AGE_DAYS = 30
 VERIFIED_MIN_CONFIDENCE = 0.7
+VERIFIED_MIN_SCORE = 60  # the verifying threshold: a verified gap must at least be worth verifying
+VERIFIED_MIN_CITATIONS = 2
+VERIFIED_MIN_NEARBY_CITATIONS = 1
 
 STRATEGIST_SYSTEM = """You are the Strategist of Kosovo Gap Scout. Once a day you read what the research workers
 learned and judge each tracked gap: a consumer business model proven elsewhere that may be missing in Kosovo,
@@ -75,6 +86,78 @@ class ApplyResult:
     new_gaps: int = 0
 
 
+def strategist_max_tokens(n_gaps: int) -> int:
+    """Thinking plus ≈ 200–400 output tokens per assessment, with headroom; never above 16k."""
+    return min(16_000, 4_000 + 600 * max(1, n_gaps))
+
+
+def changes_today(session, facts, touched_gap_ids) -> tuple[list[str], set[int]]:
+    """Spec B2.4/B7 scope: sectors whose facts or gaps changed in this run, and the gaps touched.
+
+    Sectors come from the fresh facts' sectors, the gaps those facts are about ("gap:<id>" keys) and the
+    gaps the workers proposed or updated (ToolContext.touched_gap_ids)."""
+    gap_ids = set(touched_gap_ids)
+    for f in facts:
+        key = f.entity_key or ""
+        if key.startswith("gap:") and key[4:].isdigit():
+            gap_ids.add(int(key[4:]))
+    sector_ids = {f.sector_id for f in facts if f.sector_id}
+    live: set[int] = set()
+    for gid in gap_ids:
+        gap = repo.get_gap(session, gid)
+        if gap is not None:
+            sector_ids.add(gap.sector_id)
+            live.add(gid)
+    slugs = {sec.id: sec.slug for sec in repo.list_sectors(session)}
+    return sorted(slugs[i] for i in sector_ids if i in slugs), live
+
+
+def check_verdict(fact) -> str:
+    """The presence level recorded by the protocol run (the fact's `value["verdict"]`), never the model's
+    restatement of it. Anything unrecognised reads as "unknown"."""
+    verdict = (fact.value or {}).get("verdict") if isinstance(fact.value, dict) else None
+    return verdict if verdict in PRESENCE_CAP else "unknown"
+
+
+def verified_gate_failures(session, gap, v: S.CriticVerdict | None, score, *, now) -> list[str]:
+    """Spec A10, enforced in Python from stored data. Empty list = the gap may become `verified`.
+
+    - presence check ≤ 30 days old from a complete protocol run, with a verdict other than unknown;
+    - ≥ 2 cited proof-elsewhere markets, ≥ 1 nearby (repo.proof_citations);
+    - a payment_path fact keyed gap:<id>;
+    - a Critic verdict for this gap in this run: `proceed`, or `needs_field_check` with the gap's field
+      checks answered (≥ 1 answered, none open) — no verdict means no review, so no `verified`;
+    - no open field check for the gap; confidence ≥ 0.7; score ≥ 60.
+    """
+    fails: list[str] = []
+    check = repo.latest_presence_check(
+        session, gap, now=now, max_age_days=VERIFIED_CHECK_MAX_AGE_DAYS
+    )
+    if check is None:
+        fails.append(f"no presence check ≤ {VERIFIED_CHECK_MAX_AGE_DAYS} days")
+    elif check_verdict(check) == "unknown":
+        fails.append("presence verdict unknown")
+    cited, nearby = repo.proof_citations(session, gap)
+    if cited < VERIFIED_MIN_CITATIONS or nearby < VERIFIED_MIN_NEARBY_CITATIONS:
+        fails.append(f"proof citations {cited} ({nearby} nearby)")
+    if not repo.has_fact(session, entity_type="payment_path", entity_key=f"gap:{gap.id}", now=now):
+        fails.append("no payment path")
+    open_n, answered_n = repo.field_check_counts(session, gap.id)
+    if open_n:
+        fails.append("open field check")
+    if v is None:
+        fails.append("no critic review")
+    elif v.decision == "needs_field_check" and answered_n == 0:
+        fails.append("critic wants a field check")
+    elif v.decision not in ("proceed", "needs_field_check"):
+        fails.append(f"critic says {v.decision}")
+    if score.confidence < VERIFIED_MIN_CONFIDENCE:
+        fails.append(f"confidence {score.confidence:.2f}")
+    if score.total < VERIFIED_MIN_SCORE:
+        fails.append(f"score {score.total}")
+    return fails
+
+
 def _system(text: str) -> list[dict]:
     return [
         {"type": "text", "text": text},
@@ -88,10 +171,66 @@ class Strategist:
         self.session = session
 
     def collect_inputs(
-        self, *, since: datetime, now: datetime, sector_slugs: list[str] | None = None
+        self,
+        *,
+        since: datetime,
+        now: datetime,
+        sector_slugs: list[str] | None = None,
+        priority_gap_ids=(),
     ) -> StrategyInputs:
+        """Gaps in `sector_slugs` (all when None), capped at MAX_STRATEGY_GAPS: touched today first, then
+        never scored, then the stalest `last_assessed_run_id`, so every gap rotates through. Facts are the
+        fresh ones in those sectors or about the chosen gaps; the whole payload stays ≤ MAX_INPUT_CHARS."""
         s = self.session
-        facts_rows = repo.fresh_facts_since(s, since, sector_slugs=sector_slugs, now=now)
+        sectors = {sec.id: sec.slug for sec in repo.list_sectors(s)}
+        priority = set(priority_gap_ids)
+        candidates = repo.list_gaps(
+            s, statuses=["candidate", "verifying", "verified", "parked"], sector_slugs=sector_slugs
+        )
+        candidates.sort(
+            key=lambda g: (
+                g.id not in priority,
+                g.score_components is not None,
+                g.last_assessed_run_id is not None,
+                g.last_assessed_run_id or 0,
+                g.id,
+            )
+        )
+        chosen = sorted(candidates[:MAX_STRATEGY_GAPS], key=lambda g: g.id)
+        gaps = []
+        for g in chosen:
+            check = repo.latest_presence_check(s, g, now=now)
+            gaps.append(
+                {
+                    "id": g.id,
+                    "title": g.title,
+                    "sector": sectors.get(g.sector_id),
+                    "status": g.status,
+                    "score": g.score_total,
+                    "confidence": g.confidence,
+                    "presence_level": g.presence_level,
+                    "has_presence_check": check is not None,
+                    "presence_check_verdict": check_verdict(check) if check else None,
+                    "hypothesis": g.hypothesis_md[:600],
+                    "why_not_yet": g.why_not_yet_md[:400],
+                    "components": g.score_components or {},
+                }
+            )
+        wanted = list(dict.fromkeys([*sorted(sector_slugs or []), *(g["sector"] for g in gaps)]))
+        digests = {
+            slug: (repo.get_digest(s, f"sector:{slug}") or "")[:DIGEST_CHARS]
+            for slug in [w for w in wanted if w][:MAX_DIGESTS]
+        }
+        if sector_slugs is None:
+            facts_rows = repo.fresh_facts_since(s, since, now=now)
+        else:
+            facts_rows = repo.fresh_facts_for(
+                s,
+                since,
+                now=now,
+                sector_ids={i for i, slug in sectors.items() if slug in set(sector_slugs)},
+                entity_keys={f"gap:{g.id}" for g in chosen},
+            )
         facts = sorted(
             (
                 {
@@ -106,78 +245,79 @@ class Strategist:
             ),
             key=lambda d: (-d["confidence"], d["claim"]),
         )
-        while len(json.dumps(facts, ensure_ascii=False)) > MAX_FACTS_CHARS and facts:
-            facts.pop()
-        gaps = []
-        sectors = {sec.id: sec.slug for sec in repo.list_sectors(s)}
-        for g in repo.list_gaps(
-            s, statuses=["candidate", "verifying", "verified", "parked"], sector_slugs=sector_slugs
-        ):
-            gaps.append(
-                {
-                    "id": g.id,
-                    "title": g.title,
-                    "sector": sectors.get(g.sector_id),
-                    "status": g.status,
-                    "score": g.score_total,
-                    "confidence": g.confidence,
-                    "presence_level": g.presence_level,
-                    "has_presence_check": repo.has_presence_check(s, g, now=now),
-                    "hypothesis": g.hypothesis_md[:600],
-                    "why_not_yet": g.why_not_yet_md[:400],
-                    "components": g.score_components or {},
-                }
-            )
-        gaps.sort(key=lambda d: d["id"])
-        wanted = {g["sector"] for g in gaps} | set(sector_slugs or [])
-        digests = {
-            slug: (repo.get_digest(s, f"sector:{slug}") or "")[:3000]
-            for slug in sorted(wanted)
-            if slug
-        }
-        return StrategyInputs(
-            country_md=(repo.get_digest(s, "country") or "")[:3000],
+        inputs = StrategyInputs(
+            country_md=(repo.get_digest(s, "country") or "")[:DIGEST_CHARS],
             sector_digests=digests,
-            facts=facts,
+            facts=[],
             gaps=gaps,
             taxonomy=sorted(sectors.values()),
         )
+        room = min(MAX_FACTS_CHARS, MAX_INPUT_CHARS - len(self.payload(inputs, now.date())))
+        used = 0
+        for f in facts:  # a list item costs its JSON plus ", " — an exact upper bound
+            used += len(json.dumps(f, ensure_ascii=False)) + 2
+            if used > room:
+                break
+            inputs.facts.append(f)
+        return inputs
+
+    @staticmethod
+    def payload(inputs: StrategyInputs, today: date) -> str:
+        return json.dumps(
+            {
+                "date": today.isoformat(),
+                "country_digest": inputs.country_md,
+                "sector_digests": inputs.sector_digests,
+                "facts": inputs.facts,
+                "gaps": inputs.gaps,
+                "sector_taxonomy": inputs.taxonomy,
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+
+    def _est_eur(self, user: str, max_tokens: int) -> Decimal:
+        """Worst case for one Opus call: the whole prompt (≈ 3 chars/token + system) and a full answer."""
+        units = {"input_tokens": len(user) // 3 + 3_000, "output_tokens": max_tokens}
+        return max(Decimal("0.10"), to_eur(llm_cost_usd(OPUS, units), self.llm.usd_to_eur))
 
     def assess(self, inputs: StrategyInputs, today: date) -> S.StrategistOutput:
-        payload = {
-            "date": today.isoformat(),
-            "country_digest": inputs.country_md,
-            "sector_digests": inputs.sector_digests,
-            "facts": inputs.facts,
-            "gaps": inputs.gaps,
-            "sector_taxonomy": inputs.taxonomy,
-        }
+        user = self.payload(inputs, today)
+        max_tokens = strategist_max_tokens(len(inputs.gaps))
         res = self.llm.parse(
-            model="claude-opus-5-5",
+            model=OPUS,
             output_format=S.StrategistOutput,
             system=_system(STRATEGIST_SYSTEM),
-            user=json.dumps(payload, sort_keys=True, ensure_ascii=False),
-            max_tokens=8192,
+            user=user,
+            max_tokens=max_tokens,
             effort="medium",
-            est_eur=Decimal("0.40"),
+            est_eur=self._est_eur(user, max_tokens),
         )
         return res.parsed
 
     def critique(
         self, output: S.StrategistOutput, inputs: StrategyInputs, today: date, top_n: int = 3
     ) -> S.CriticOutput:
-        ranked = sorted(
-            output.assessments,
-            key=lambda a: (
-                -(
-                    a.scores.proof
-                    + a.scores.absence
-                    + a.scores.demand
-                    + a.scores.founder_fit
-                    - a.scores.risk_penalty
-                )
-            ),
-        )
+        known = {g["id"]: g for g in inputs.gaps}
+
+        def capped_total(a: S.GapAssessment) -> int:
+            """The total the rubric will actually give (presence caps applied), not the raw sum."""
+            g = known.get(a.gap_id, {})
+            return score_gap(
+                proof=a.scores.proof,
+                absence=a.scores.absence,
+                demand=a.scores.demand,
+                founder_fit=a.scores.founder_fit,
+                risk_penalty=a.scores.risk_penalty,
+                presence_level=g.get("presence_check_verdict")
+                or g.get("presence_level")
+                or "unknown",
+                has_presence_check=bool(g.get("has_presence_check")),
+                hard_filter_failed=None if a.hard_filter_failed == "none" else a.hard_filter_failed,
+                confidence=a.confidence,
+            ).total
+
+        ranked = sorted(output.assessments, key=lambda a: (-capped_total(a), a.gap_id))
         top = ranked[:top_n]
         if not top:
             return S.CriticOutput(verdicts=[])
@@ -189,14 +329,15 @@ class Strategist:
             "facts": inputs.facts,
             "country_digest": inputs.country_md,
         }
+        user = json.dumps(payload, sort_keys=True, ensure_ascii=False)
         res = self.llm.parse(
-            model="claude-opus-5-5",
+            model=OPUS,
             output_format=S.CriticOutput,
             system=_system(CRITIC_SYSTEM),
-            user=json.dumps(payload, sort_keys=True, ensure_ascii=False),
-            max_tokens=4096,
+            user=user,
+            max_tokens=CRITIC_MAX_TOKENS,
             effort="high",
-            est_eur=Decimal("0.30"),
+            est_eur=self._est_eur(user, CRITIC_MAX_TOKENS),
         )
         return res.parsed
 
@@ -208,7 +349,11 @@ class Strategist:
         now: datetime,
         run_id: int | None,
         max_open_field_checks: int = 5,
+        critic_ok: bool = True,
     ) -> ApplyResult:
+        """Write scores and statuses. `critic_ok=False` (the Critic call failed) applies the Strategist's
+        output unreviewed: a gap that already had a score cannot gain score or confidence, and no gap can
+        become verified (no Critic verdict)."""
         s = self.session
         result = ApplyResult()
         verdicts = {v.gap_id: v for v in critic.verdicts}
@@ -222,11 +367,13 @@ class Strategist:
                 max(a.scores.risk_penalty, v.risk_penalty) if v else a.scores.risk_penalty
             )
             confidence = min(a.confidence, v.confidence) if v else a.confidence
-            has_check_60 = repo.has_presence_check(s, gap, now=now, max_age_days=60)
-            has_check_30 = repo.has_presence_check(
+            check = repo.latest_presence_check(s, gap, now=now, max_age_days=60)
+            has_check_60 = check is not None
+            check_30 = repo.latest_presence_check(
                 s, gap, now=now, max_age_days=VERIFIED_CHECK_MAX_AGE_DAYS
             )
-            presence = a.presence_level if has_check_60 else (gap.presence_level or "unknown")
+            check_30_ok = check_30 is not None and check_verdict(check_30) != "unknown"
+            presence = check_verdict(check) if check else (gap.presence_level or "unknown")
             score = score_gap(
                 proof=a.scores.proof,
                 absence=a.scores.absence,
@@ -238,7 +385,15 @@ class Strategist:
                 hard_filter_failed=None if a.hard_filter_failed == "none" else a.hard_filter_failed,
                 confidence=confidence,
             )
+            if not critic_ok and gap.score_components is not None:
+                # unreviewed: a previously scored gap may fall but never rise
+                if score.total > (gap.score_total or 0):
+                    score = replace(
+                        score, total=gap.score_total or 0, components=dict(gap.score_components)
+                    )
+                score = replace(score, confidence=min(score.confidence, gap.confidence or 0.0))
             old_status, old_score = gap.status, gap.score_total
+            blocked: list[str] = []
             question = (
                 v.field_check_question if v and v.field_check_question else a.field_check_question
             ).strip()
@@ -249,15 +404,19 @@ class Strategist:
                 new_status, flag = "parked", "critic-says-kill"
             elif v and v.decision == "park":
                 new_status = "parked"
+            elif (
+                old_status == "verified"
+                and check_30_ok
+                and score.confidence >= VERIFIED_MIN_CONFIDENCE
+            ):
+                # verified is demoted only by a Critic park/kill, an expired check or confidence < 0.7
+                new_status = "verified"
             elif a.recommended_status == "killed":
                 new_status, flag = "parked", "strategist-says-kill"
             elif a.recommended_status == "parked":
                 new_status = "parked"
-            elif (
-                a.recommended_status == "verified"
-                and has_check_30
-                and score.confidence >= VERIFIED_MIN_CONFIDENCE
-                and not (v and v.decision == "needs_field_check")
+            elif a.recommended_status == "verified" and not (
+                blocked := verified_gate_failures(s, gap, v, score, now=now)
             ):
                 new_status = "verified"
             elif score.total >= 60:
@@ -267,7 +426,12 @@ class Strategist:
             wants_check = (v and v.decision == "needs_field_check") or needs_field_check(
                 score.total, score.confidence
             )
-            if wants_check and question and open_checks < max_open_field_checks:
+            if (
+                wants_check
+                and question
+                and new_status != "verified"
+                and open_checks < max_open_field_checks
+            ):
                 repo.add_field_check(
                     s,
                     gap_id=gap.id,
@@ -289,7 +453,7 @@ class Strategist:
                 GapAssessmentRow(
                     gap_id=gap.id,
                     run_id=run_id,
-                    model="claude-opus-5-5",
+                    model=OPUS,
                     strategist=a.model_dump(),
                     critic=v.model_dump() if v else None,
                     score_total=score.total,
@@ -307,7 +471,8 @@ class Strategist:
                         old_score,
                         score.total,
                         score.confidence,
-                        (a.reasoning or "")[:200],
+                        (a.reasoning or "")[:200]
+                        + (f" (not verified: {'; '.join(blocked)})" if blocked else ""),
                     )
                 )
         for idea in output.new_gaps:

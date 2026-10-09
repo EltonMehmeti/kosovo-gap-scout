@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import signal
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -53,6 +54,17 @@ def seed() -> None:
         console.print(seed_all(s))
 
 
+def sigterm_to_exit(signum, frame) -> None:
+    """SIGTERM (Render stopping the job) becomes SystemExit(143), so run_once's `except BaseException`
+    closes the run row as failed and releases its task instead of leaving them `running`."""
+    raise SystemExit(143)
+
+
+def install_sigterm_handler():
+    """Install sigterm_to_exit; returns the previous handler so the caller can restore it."""
+    return signal.signal(signal.SIGTERM, sigterm_to_exit)
+
+
 @app.command()
 def run(
     budget: float | None = typer.Option(None, help="Override today's cap in EUR"),
@@ -61,13 +73,17 @@ def run(
 ) -> None:
     """Run today's cycle: plan → research → judge → brief."""
     settings = get_settings()
-    summary = run_once(
-        settings,
-        today=None,
-        budget_override=Decimal(str(budget)) if budget is not None else None,
-        phase_override=phase,
-        dry_run=dry_run,
-    )
+    previous = install_sigterm_handler()
+    try:
+        summary = run_once(
+            settings,
+            today=None,
+            budget_override=Decimal(str(budget)) if budget is not None else None,
+            phase_override=phase,
+            dry_run=dry_run,
+        )
+    finally:
+        signal.signal(signal.SIGTERM, previous)
     console.print(
         f"run #{summary.run_id} {summary.day} phase={summary.phase} planned={summary.planned} "
         f"done={summary.done} failed={summary.failed} spent=€{summary.spent_eur} "
@@ -206,7 +222,8 @@ def chart_diff_cmd() -> None:
 
 @app.command("flag-gap")
 def flag_gap(gap_id: int, unflag: bool = typer.Option(False, "--unflag")) -> None:
-    """Mark a gap as founder-flagged: it is verified first and in maintenance phase."""
+    """Ask for one re-verification of a gap ("verify this"): one flagged gap per day is verified first, in
+    every phase, and the flag clears when that verify-gap completes. --unflag withdraws the request."""
     with session_factory(get_settings())() as s:
         if repo.get_gap(s, gap_id) is None:
             raise typer.BadParameter(f"unknown gap {gap_id}")

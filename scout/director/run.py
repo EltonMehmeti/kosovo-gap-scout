@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import traceback
 from dataclasses import dataclass
@@ -23,8 +24,8 @@ from scout.llm.gateway import LLM, LLMError
 from scout.sources import apple, play
 from scout.sources.askdata import AskDataClient
 from scout.sources.places import PlacesClient
-from scout.strategy.schemas import DirectorReview
-from scout.strategy.strategist import Strategist
+from scout.strategy.schemas import CriticOutput, DirectorReview
+from scout.strategy.strategist import Strategist, changes_today
 from scout.worker.chart_diff import classify_and_record, run_chart_diff
 from scout.worker.profiles import PROFILES, build_brief, build_system, journal_markdown
 from scout.worker.research import ResearchWorker
@@ -273,6 +274,7 @@ def _run_body(
     deadline = now + timedelta(minutes=settings.run_max_minutes)
     journal_md = journal_markdown(repo.latest_journal(session, limit=3))
     notes: list[str] = []
+    contexts: list[ToolContext] = []
     planned: list = []
     done = failed = 0
     chart_report = None
@@ -306,7 +308,7 @@ def _run_body(
         stopped_reason = "budget"
     else:
         stale_cut = now - timedelta(minutes=settings.run_max_minutes)
-        released = repo.release_stale_tasks(session, claimed_before=stale_cut)
+        released = repo.release_stale_tasks(session, claimed_before=stale_cut, now=now)
         if released:
             notes.append(f"released {released} stale running task(s)")
         # 1. plan
@@ -382,8 +384,10 @@ def _run_body(
                     if task.profile in ("verify-gap", "deep-dive") and payload.get("gap_id"):
                         gap = repo.get_gap(session, int(payload["gap_id"]))
                         if gap is not None:
-                            payload.setdefault("hypothesis", gap.hypothesis_md)
-                            payload.setdefault("presence_level", gap.presence_level)
+                            payload["hypothesis"] = payload.get("hypothesis") or gap.hypothesis_md
+                            payload["presence_level"] = (
+                                payload.get("presence_level") or gap.presence_level
+                            )
                     brief = build_brief(
                         profile,
                         payload,
@@ -400,7 +404,10 @@ def _run_body(
                         task_id=task.id,
                         places=places,
                         askdata=askdata,
+                        profile=task.profile,
+                        payload=payload,
                     )
+                    contexts.append(ctx)  # even a failed task may have touched gaps
                     outcome = worker.run(task.id, profile, brief, ctx)
                     result_md, cost = outcome.summary_md, outcome.cost_eur
             except BudgetExceeded:
@@ -451,22 +458,38 @@ def _run_body(
                 stopped_reason = "budget"
                 break
 
-    # 3. judge (only when this run produced new facts)
+    # 3. judge — only the sectors whose facts or gaps changed in this run (spec B2.4/B7)
     changes = []
     strategist = Strategist(llm, session)
     fresh = repo.fresh_facts_since(session, run.started_at, now=clock())
-    if fresh:
+    touched = set().union(*(c.touched_gap_ids for c in contexts))
+    changed_sectors, changed_gaps = changes_today(session, fresh, touched)
+    if fresh and not changed_sectors:
+        notes.append("strategy skipped: no sector changed today")
+    if changed_sectors:
         try:
             inputs = strategist.collect_inputs(
-                since=run.started_at - timedelta(hours=1), now=clock()
+                since=run.started_at - timedelta(hours=1),
+                now=clock(),
+                sector_slugs=changed_sectors,
+                priority_gap_ids=changed_gaps,
             )
             if inputs.gaps or inputs.facts:
                 output = strategist.assess(inputs, today)
-                critic = strategist.critique(output, inputs, today)
-                applied = strategist.apply(output, critic, now=clock(), run_id=run.id)
+                critic_ok = True
+                try:  # a failed Critic must not throw away the Strategist answer already paid for
+                    critic = strategist.critique(output, inputs, today)
+                except (LLMError, BudgetExceeded, anthropic.APIError) as e:
+                    session.rollback()
+                    critic, critic_ok = CriticOutput(verdicts=[]), False
+                    notes.append(f"critic skipped: {type(e).__name__}: {str(e)[:120]}")
+                applied = strategist.apply(
+                    output, critic, now=clock(), run_id=run.id, critic_ok=critic_ok
+                )
                 changes = applied.changes
                 notes.append(
-                    f"strategist: {output.headline}; new gaps {applied.new_gaps}; "
+                    f"strategist ({', '.join(changed_sectors)}; {len(inputs.gaps)} gaps): "
+                    f"{output.headline}; new gaps {applied.new_gaps}; "
                     f"field checks {applied.field_checks_added}"
                 )
         except (LLMError, BudgetExceeded, anthropic.APIError) as e:
@@ -536,6 +559,19 @@ def _run_body(
     )
 
 
+_LIST_MARK = re.compile(r"^(?:[-*•·>]+|\d+[.)])\s*")
+_FIELD_CHECK = re.compile(r"^field[- ]?check\s*:\s*(.*)$", re.IGNORECASE)
+
+
+def parse_field_check(line: str) -> str | None:
+    """The question of a "field-check: …" summary line, tolerating Markdown bullets, numbering, quotes
+    and bold/underline markers; None for any other line."""
+    text = _LIST_MARK.sub("", line.strip()).replace("**", "").replace("__", "").strip()
+    match = _FIELD_CHECK.match(text)
+    question = match.group(1).strip() if match else ""
+    return question or None
+
+
 def _apply_outcome(session, task, outcome, *, today, now) -> None:
     payload = task.payload or {}
     sector = payload.get("sector")
@@ -547,13 +583,21 @@ def _apply_outcome(session, task, outcome, *, today, now) -> None:
     if complete and task.profile == "deep-dive" and payload.get("gap_id"):
         repo.set_gap_test_plan(session, int(payload["gap_id"]), outcome.summary_md)
         repo.set_setting(session, f"deep-dive-done:{today.replace(day=1).isoformat()}", True)
+    if complete and task.profile == "verify-gap" and payload.get("gap_id"):
+        # a founder flag is a one-shot "verify this" (spec A5): done once the verify-gap completes
+        flagged = list(repo.get_setting(session, "flagged_gaps", []) or [])
+        if int(payload["gap_id"]) in flagged:
+            repo.set_setting(
+                session, "flagged_gaps", [g for g in flagged if g != int(payload["gap_id"])]
+            )
     if task.profile == "verify-gap" and payload.get("gap_id"):
         for line in outcome.summary_md.splitlines():
-            if line.lower().startswith("field-check:") and len(repo.open_field_checks(session)) < 5:
+            question = parse_field_check(line)
+            if question and len(repo.open_field_checks(session)) < 5:
                 repo.add_field_check(
                     session,
                     gap_id=int(payload["gap_id"]),
-                    question=line.split(":", 1)[1].strip(),
+                    question=question,
                     why="verify-gap was ambiguous",
                     due=today + timedelta(days=7),
                 )

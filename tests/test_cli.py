@@ -92,3 +92,25 @@ def test_run_dry_run_passes_flags(monkeypatch):
     )
     assert out.exit_code == 0 and seen["budget_override"] == Decimal("0.50")
     assert seen["phase_override"] == "verification" and seen["dry_run"] is True
+
+
+def test_run_installs_a_sigterm_handler_that_exits_143_and_restores_it(monkeypatch):
+    import os
+    import signal
+
+    before = signal.getsignal(signal.SIGTERM)
+    seen = {}
+
+    def fake_run_once(settings, **kw):
+        seen["handler"] = signal.getsignal(signal.SIGTERM)
+        if seen["handler"] is getattr(cli, "sigterm_to_exit", None):  # never kill pytest itself
+            os.kill(os.getpid(), signal.SIGTERM)  # Render stopping the cron job
+        raise AssertionError("SIGTERM should have raised SystemExit")
+
+    monkeypatch.setattr(cli, "run_once", fake_run_once)
+    out = runner.invoke(cli.app, ["run", "--dry-run"])
+    assert seen["handler"] is cli.sigterm_to_exit and out.exit_code == 143
+    assert signal.getsignal(signal.SIGTERM) is before
+    with pytest.raises(SystemExit) as exc:
+        cli.sigterm_to_exit(signal.SIGTERM, None)
+    assert exc.value.code == 143

@@ -138,15 +138,70 @@ def fresh_facts_since(
     return list(session.scalars(stmt.order_by(Fact.confidence.desc()).limit(400)))
 
 
+def latest_presence_check(
+    session: Session, gap: Gap, *, now: datetime, max_age_days: int = 60
+) -> Fact | None:
+    """Newest unexpired presence_check fact for the gap from a complete protocol run (a `degraded`
+    check — too few real searches in its task — is kept as evidence but never lifts the cap)."""
+    stmt = (
+        select(Fact)
+        .where(
+            Fact.entity_type == "presence_check",
+            Fact.entity_key == f"gap:{gap.id}",
+            Fact.observed_at >= now - timedelta(days=max_age_days),
+            Fact.expires_at > now,
+        )
+        .order_by(Fact.observed_at.desc(), Fact.id.desc())
+    )
+    for fact in session.scalars(stmt):
+        if not (isinstance(fact.value, dict) and fact.value.get("degraded")):
+            return fact
+    return None
+
+
+def fresh_facts_for(
+    session: Session,
+    since: datetime,
+    *,
+    now: datetime,
+    sector_ids: set[int],
+    entity_keys: set[str],
+    limit: int = 400,
+) -> list[Fact]:
+    """Fresh facts in the given sectors, about the given entities (e.g. "gap:12"), or with no sector."""
+    scope = or_(Fact.sector_id.is_(None), Fact.sector_id.in_(sector_ids or {-1}))
+    if entity_keys:
+        scope = or_(scope, Fact.entity_key.in_(entity_keys))
+    stmt = select(Fact).where(Fact.observed_at >= since, Fact.expires_at > now, scope)
+    return list(session.scalars(stmt.order_by(Fact.confidence.desc(), Fact.id).limit(limit)))
+
+
 def has_presence_check(
     session: Session, gap: Gap, *, now: datetime, max_age_days: int = 60
 ) -> bool:
-    stmt = select(Fact).where(
-        Fact.entity_type == "presence_check",
-        Fact.entity_key == f"gap:{gap.id}",
-        Fact.observed_at >= now - timedelta(days=max_age_days),
+    return latest_presence_check(session, gap, now=now, max_age_days=max_age_days) is not None
+
+
+def has_fact(session: Session, *, entity_type: str, entity_key: str, now: datetime) -> bool:
+    stmt = select(Fact.id).where(
+        Fact.entity_type == entity_type, Fact.entity_key == entity_key, Fact.expires_at > now
     )
     return session.scalars(stmt).first() is not None
+
+
+def proof_citations(session: Session, gap: Gap) -> tuple[int, int]:
+    """(cited markets, cited nearby markets) for the gap's proven model — the stored signal behind spec
+    A10's "≥ 2 proof-elsewhere citations (≥ 1 nearby)". A citation is a distinct market country in
+    `ProvenModel.markets` whose entry carries a source URL; a market named without a URL does not count."""
+    if gap.proven_model_id is None:
+        return 0, 0
+    pm = session.get(ProvenModel, gap.proven_model_id)
+    countries = {
+        str(m.get("country", "")).strip().upper()
+        for m in (pm.markets or [] if pm else [])
+        if isinstance(m, dict) and str(m.get("url") or "").strip() and m.get("country")
+    }
+    return len(countries), len(countries & NEARBY)
 
 
 # ---------- sectors, digests ----------
@@ -714,6 +769,13 @@ def open_field_checks(session: Session) -> list[FieldCheck]:
     )
 
 
+def field_check_counts(session: Session, gap_id: int) -> tuple[int, int]:
+    """(open, answered) field checks for one gap."""
+    rows = session.scalars(select(FieldCheck.status).where(FieldCheck.gap_id == gap_id))
+    statuses = list(rows)
+    return statuses.count("open"), statuses.count("answered")
+
+
 def answer_field_check(
     session: Session, fc: FieldCheck, *, answer: str, answered_at: datetime
 ) -> None:
@@ -734,16 +796,26 @@ def runs_on_day(session: Session, day: date) -> list[Run]:
     return list(session.scalars(select(Run).where(Run.day == day).order_by(Run.id)))
 
 
-def release_stale_tasks(session: Session, *, claimed_before: datetime) -> int:
-    """Put tasks stuck in 'running' (claimed before the cutoff) back in the queue."""
+def release_stale_tasks(
+    session: Session, *, claimed_before: datetime, now: datetime | None = None
+) -> int:
+    """Put tasks stuck in 'running' (claimed before the cutoff) back in the queue — or fail them when they
+    have used MAX_ATTEMPTS, so a task that keeps getting the process killed cannot loop forever."""
     stale = list(
         session.scalars(
             select(Task).where(Task.status == "running", Task.started_at < claimed_before)
         )
     )
     for t in stale:
-        t.status = "queued"
         t.locked_by = None
+        if t.attempts >= MAX_ATTEMPTS:
+            t.status = "failed"
+            t.finished_at = now or claimed_before
+            t.error = (
+                f"left running by a killed run; {t.attempts} attempts used (max {MAX_ATTEMPTS})"
+            )
+        else:
+            t.status = "queued"
     session.commit()
     return len(stale)
 

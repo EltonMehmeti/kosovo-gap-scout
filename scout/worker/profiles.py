@@ -119,8 +119,12 @@ Run the presence-check protocol completely — this is the anti-hallucination ru
    "web_hits": [...], "urls": [...]}}. Verdicts: absent (nothing in any channel), exists-but-poor (≤ 2 players,
    weak reviews or activity, or social-media-only), prishtina-only, offline-only (businesses exist but no
    digital product), decent (≥ 3 active players with digital products), unknown (sources degraded).
-6. Save a payment_path fact (how a Kosovo customer could pay for this: card via local PSP, cash on delivery,
-   bank transfer, in-app via Google/Apple billing) and the strongest why-not-yet facts.
+   The system accepts this fact only after your searches in steps 1–2 and stores "unknown" if fewer than
+   seven Places searches or no app-store search actually ran.
+6. Save a payment_path fact with entity_key "gap:{gap_id}" (how a Kosovo customer could pay for this: card
+   via local PSP, cash on delivery, bank transfer, in-app via Google/Apple billing) and the strongest
+   why-not-yet facts. Make sure the gap's proven model is recorded (kb_record_proven_model) with a source
+   URL for each market — the system only counts cited markets as proof.
 7. Call kb_propose_gap with the same title "{gap_title}", sector `{sector}`, presence_level set to the
    verdict, and the updated hypothesis and why_not_yet — this updates the existing gap.
 If the verdict is ambiguous, include one line "field-check: <a question the founder can answer in three
