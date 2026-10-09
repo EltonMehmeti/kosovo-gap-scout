@@ -725,3 +725,28 @@ def test_review_plan_never_drops_a_founder_task(world, settings):
     assert s.get(repo.Task, t1.id).status == "queued"
     assert not any("dropped" in n for n in notes)
     s.close()
+
+
+def test_founder_cap_for_today_sets_the_run_cap_and_override_wins(world, settings):
+    from scout import founder
+
+    s = world["factory"]()
+    founder.set_today_cap(s, "0.40", today=MONDAY)
+    s.close()
+    R.run_once(settings, **_kw(world, client=FakeClient([]), runner_factory=None, dry_run=True))
+    s = world["factory"]()
+    assert repo.last_run(s).budget_cap_eur == Decimal("0.40")
+    s.close()
+    R.run_once(
+        settings,
+        **_kw(
+            world,
+            client=FakeClient([]),
+            runner_factory=None,
+            dry_run=True,
+            budget_override=Decimal("0.70"),
+        ),
+    )
+    s = world["factory"]()
+    assert repo.last_run(s).budget_cap_eur == Decimal("0.70")
+    s.close()

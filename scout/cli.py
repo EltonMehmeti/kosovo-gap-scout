@@ -11,15 +11,13 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from scout import founder
 from scout.config import Settings, get_settings
 from scout.db import repo
 from scout.db.base import make_engine, make_session_factory
-from scout.db.models import FieldCheck
-from scout.db.repo import FactIn
-from scout.director.planner import PHASES
 from scout.director.run import run_once
+from scout.founder import FounderError
 from scout.seeds import seed_all
-from scout.worker.profiles import PROFILES
 
 app = typer.Typer(help="Kosovo Gap Scout", no_args_is_help=True)
 field_check_app = typer.Typer(help="Founder field checks")
@@ -138,70 +136,36 @@ def add_task(
     priority: int = typer.Option(70),
 ) -> None:
     """Queue a task for the next run."""
-    if profile not in PROFILES and profile != "chart-diff":
-        raise typer.BadParameter(f"profile must be one of {', '.join([*PROFILES, 'chart-diff'])}")
-    with session_factory(get_settings())() as s:
-        payload: dict = {}
-        if sector:
-            sec = repo.get_sector(s, sector)
-            if sec is None:
-                raise typer.BadParameter(f"unknown sector {sector}")
-            payload = {"sector": sec.slug, "sector_name": sec.name_en}
-        if gap_id is not None:
-            gap = repo.get_gap(s, gap_id)
-            if gap is None:
-                raise typer.BadParameter(f"unknown gap {gap_id}")
-            sec = next((x for x in repo.list_sectors(s) if x.id == gap.sector_id), None)
-            payload = {"gap_id": gap.id, "gap_title": gap.title, "sector": sec.slug if sec else ""}
-        if theme:
-            payload = {"theme": theme, "theme_name": theme.replace("-", " ")}
-        payload["founder"] = True  # the director review never drops a task the founder queued
-        est = PROFILES[profile].est_cost_eur if profile in PROFILES else Decimal("0.05")
-        t = repo.enqueue_task(
-            s, profile=profile, payload=payload, priority=priority, est_cost_eur=est
-        )
-        console.print(f"queued task #{t.id} {profile} {payload}")
+    settings = get_settings()
+    with session_factory(settings)() as s:
+        try:
+            t = founder.add_task(
+                s,
+                profile,
+                today=_local_today(settings),
+                sector=sector,
+                gap_id=gap_id,
+                theme=theme,
+                priority=priority,
+            )
+        except FounderError as e:
+            raise typer.BadParameter(str(e)) from None
+        console.print(f"queued task #{t.id} {profile} {t.payload}")
 
 
 @field_check_app.command("answer")
 def field_check_answer(check_id: int, answer: str) -> None:
     """Record the founder's answer as a high-confidence fact and re-queue verification of the gap."""
-    with session_factory(get_settings())() as s:
-        fc = s.get(FieldCheck, check_id)
-        if fc is None or fc.status != "open":
-            raise typer.BadParameter(f"no open field check #{check_id}")
-        now = datetime.now(UTC)
-        gap = repo.get_gap(s, fc.gap_id) if fc.gap_id else None
-        sec = next((x for x in repo.list_sectors(s) if gap and x.id == gap.sector_id), None)
-        repo.upsert_fact(
-            s,
-            FactIn(
-                claim=f"Founder field check — Q: {fc.question} A: {answer}",
-                entity_type="gap",
-                entity_key=f"gap:{fc.gap_id}" if fc.gap_id else "general",
-                confidence=0.95,
-                sector_slug=sec.slug if sec else None,
-                ttl_days=180,
-                source_name="founder",
-            ),
-            run_id=None,
-            observed_at=now,
-        )
-        repo.answer_field_check(s, fc, answer=answer, answered_at=now)
-        if gap is not None:
-            repo.enqueue_task(
-                s,
-                profile="verify-gap",
-                priority=90,
-                est_cost_eur=PROFILES["verify-gap"].est_cost_eur,
-                payload={
-                    "gap_id": gap.id,
-                    "gap_title": gap.title,
-                    "sector": sec.slug if sec else "",
-                },
+    settings = get_settings()
+    with session_factory(settings)() as s:
+        try:
+            fc = founder.answer_field_check(
+                s, check_id, answer, today=_local_today(settings), now=datetime.now(UTC)
             )
+        except FounderError as e:
+            raise typer.BadParameter(str(e)) from None
         console.print(
-            f"answered #{check_id}; verify-gap queued" if gap else f"answered #{check_id}"
+            f"answered #{check_id}; verify-gap queued" if fc.gap_id else f"answered #{check_id}"
         )
 
 
@@ -225,20 +189,34 @@ def chart_diff_cmd() -> None:
 def flag_gap(gap_id: int, unflag: bool = typer.Option(False, "--unflag")) -> None:
     """Ask for one re-verification of a gap ("verify this"): one flagged gap per day is verified first, in
     every phase, and the flag clears when that verify-gap completes. --unflag withdraws the request."""
-    with session_factory(get_settings())() as s:
-        if repo.get_gap(s, gap_id) is None:
-            raise typer.BadParameter(f"unknown gap {gap_id}")
-        flagged = list(repo.get_setting(s, "flagged_gaps", []) or [])
-        flagged = [g for g in flagged if g != gap_id] if unflag else sorted(set(flagged) | {gap_id})
-        repo.set_setting(s, "flagged_gaps", flagged)
-        console.print(f"flagged gaps: {flagged}")
+    settings = get_settings()
+    with session_factory(settings)() as s:
+        try:
+            ids = founder.flag_gap(s, gap_id, today=_local_today(settings), unflag=unflag)
+        except FounderError as e:
+            raise typer.BadParameter(str(e)) from None
+        console.print(f"flagged gaps: {ids}")
 
 
 @app.command("set-phase")
 def set_phase(phase: str) -> None:
     """Switch phase: foundation | verification | maintenance."""
-    if phase not in PHASES:
-        raise typer.BadParameter(f"phase must be one of {', '.join(PHASES)}")
-    with session_factory(get_settings())() as s:
-        repo.set_setting(s, "phase", {"value": phase})
+    settings = get_settings()
+    with session_factory(settings)() as s:
+        try:
+            founder.set_phase(s, phase, today=_local_today(settings))
+        except FounderError as e:
+            raise typer.BadParameter(str(e)) from None
         console.print(f"phase = {phase}")
+
+
+@app.command("set-cap")
+def set_cap(eur: str = typer.Argument("", help="EUR for today; empty clears")) -> None:
+    """Set (or clear) today's spend cap; the next run uses it instead of the phase cap."""
+    settings = get_settings()
+    with session_factory(settings)() as s:
+        try:
+            value = founder.set_today_cap(s, eur, today=_local_today(settings))
+        except FounderError as e:
+            raise typer.BadParameter(str(e)) from None
+        console.print(f"today's cap = €{value}" if value is not None else "today's cap cleared")
