@@ -69,8 +69,10 @@ class ResearchWorker:
                 output_config={"effort": profile.effort},
             )
             stream = iter(runner)
+            # Gate only when a paid request follows: the first of a runner, or after a tool_use turn.
+            paid_request_next = True
             while True:
-                if not self.guard.can_afford(step_est):
+                if paid_request_next and not self.guard.can_afford(step_est):
                     budget_stopped = True
                     break
                 try:
@@ -84,7 +86,11 @@ class ResearchWorker:
                     truncated = True
                 # Mirror the history: the runner keeps its own copy and does not expose it.
                 messages.append({"role": "assistant", "content": message.content})
-                tool_response = runner.generate_tool_call_response()  # cached; tools still run once
+                if message.stop_reason != "tool_use":
+                    # The SDK runner only runs tools on tool_use turns; end/pause/max_tokens stop or resume.
+                    break
+                # Same call the runner makes next; it caches the response, so tools run once.
+                tool_response = runner.generate_tool_call_response()
                 if tool_response is not None:
                     messages.append(tool_response)
             if budget_stopped or last is None or last.stop_reason != "pause_turn":

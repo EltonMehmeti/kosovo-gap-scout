@@ -114,3 +114,39 @@ def test_worker_reports_max_tokens():
     assert (
         calls[0]["output_config"] == {"effort": "high"} and calls[0]["model"] == "claude-opus-5-5"
     )
+
+
+def test_end_turn_over_cap_is_not_budget_stopped():
+    guard, calls = FakeGuard(cap=Decimal("0.03")), []
+    big = FakeUsage(input_tokens=20_000, output_tokens=0)
+    done = FakeMessage(content=[text_block("all done")], stop_reason="end_turn", usage=big)
+    out = _worker(guard, [[done]], calls).run(5, PROFILES["map-sector"], "brief", _ctx(guard))
+    assert out.budget_stopped is False and out.summary_md == "all done"
+    assert "stopped early" not in out.summary_md and out.iterations == 1
+
+
+def test_max_tokens_turn_does_not_run_tools():
+    from tests import fakes
+
+    guard, calls, executed = FakeGuard(), [], []
+
+    class CountingRunner(fakes.FakeRunner):
+        def generate_tool_call_response(self):
+            executed.append(1)
+            return super().generate_tool_call_response()
+
+    def factory(**kwargs):
+        calls.append(kwargs)
+        return CountingRunner(script.pop(0), kwargs.get("max_iterations"))
+
+    script = [
+        [
+            FakeMessage(
+                content=[tool_use_block("kb_search", {"query": "x"})], stop_reason="max_tokens"
+            )
+        ]
+    ]
+    llm = LLM(FakeClient(), guard, Decimal("0.92"))
+    worker = ResearchWorker(FakeClient(), llm, guard, SYSTEM, runner_factory=factory)
+    out = worker.run(5, PROFILES["map-sector"], "brief", _ctx(guard))
+    assert executed == [] and out.truncated and out.iterations == 1
