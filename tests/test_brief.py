@@ -160,3 +160,33 @@ def test_spend_reflects_narrative_cost(db_session, run):
         db_session, LLM(client, FakeGuard(), Decimal("0.92")), run, today=TODAY, now=NOW, changes=[]
     )
     assert "today €0.71" in md and "month to date €0.71" in md
+
+
+def _quiet_inputs(statuses, chart_errors=()):
+    from types import SimpleNamespace
+
+    return B.BriefInputs(
+        run=None,
+        today=TODAY,
+        changes=[],
+        fresh_facts=[],
+        field_checks=[],
+        tasks=[SimpleNamespace(status=s) for s in statuses],
+        chart_errors=list(chart_errors),
+        spent_today=Decimal("0.4"),
+        spent_mtd=Decimal("1"),
+        cap=Decimal("3"),
+        places_calls=0,
+    )
+
+
+def test_quiet_day_line_reports_failures_and_chart_errors():
+    assert B.render_brief(_quiet_inputs(["done", "done"])) == (
+        "Quiet day — 2 tasks, €0.40, nothing moved."
+    )
+    assert B.render_brief(_quiet_inputs(["failed"] * 5)) == (
+        "Quiet day — 5 tasks, €0.40, nothing moved; 5 failed."
+    )
+    assert B.render_brief(_quiet_inputs(["done", "failed"], ["xk apple: timeout"])) == (
+        "Quiet day — 2 tasks, €0.40, nothing moved; 1 failed; 1 chart errors."
+    )

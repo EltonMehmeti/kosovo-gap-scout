@@ -75,7 +75,13 @@ def _money(x: Decimal) -> str:
 def render_brief(inputs: BriefInputs, narrative: str = "") -> str:
     n_tasks = len(inputs.tasks)
     if is_quiet(inputs):
-        return f"Quiet day — {n_tasks} tasks, {_money(inputs.spent_today)}, nothing moved."
+        line = f"Quiet day — {n_tasks} tasks, {_money(inputs.spent_today)}, nothing moved"
+        n_failed = sum(1 for t in inputs.tasks if t.status == "failed")
+        if n_failed:  # a broken engine must not read as a calm day
+            line += f"; {n_failed} failed"
+        if inputs.chart_errors:
+            line += f"; {len(inputs.chart_errors)} chart errors"
+        return line + "."
     top = sorted(inputs.changes, key=lambda c: -c.new_score)
     headline = (
         f"# {inputs.today.isoformat()} — {top[0].title}: {top[0].new_status} ({top[0].new_score}/100)"
