@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Gaps{% endblock %}
+{% block content %}
+<h1>Gaps</h1>
+{% for status, items in board %}
+  {% if status == 'killed' %}<details><summary><h2 style="display:inline">Killed ({{ items|length }})</h2></summary>{% else %}
+  <h2>{{ status|capitalize }} ({{ items|length }})</h2>{% endif %}
+  {% for g in items %}
+    <div class="card">
+      <div class="row">
+        <a href="/gaps/{{ g.id }}"><strong>{{ g.title }}</strong></a>
+        {% if g.id in finalists %}<span class="badge">★ Finalist</span>{% endif %}
+        {% if g.id in flagged %}<span class="badge">verify queued</span>{% endif %}
+        {% if g.critic_flag %}<span class="badge">{{ g.critic_flag }}</span>{% endif %}
+      </div>
+      <div class="muted">
+        {{ sectors[g.sector_id].name_en if g.sector_id in sectors else '' }}
+        · score {{ g.score_total }} · conf {{ '%.2f'|format(g.confidence) }}
+        · presence {{ g.presence_level }} · updated {{ g.updated_at.strftime('%Y-%m-%d') }}
+      </div>
+      {% set next = '/gaps' %}
+      {% include "_gap_actions.html" %}
+    </div>
+  {% else %}
+    <p class="muted">None.</p>
+  {% endfor %}
+  {% if status == 'killed' %}</details>{% endif %}
+{% endfor %}
+{% endblock %}
