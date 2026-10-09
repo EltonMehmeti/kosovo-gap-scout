@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from sqlalchemy.exc import DataError
 
 from scout.config import Settings
 from scout.web import auth
@@ -37,6 +38,16 @@ def create_app(settings: Settings, session_factory) -> FastAPI:
         if not auth.is_logged_in(request, settings.dashboard_token):
             return RedirectResponse("/login", status_code=303)
         return await call_next(request)
+
+    @app.exception_handler(DataError)
+    def bad_value(request: Request, exc: DataError):
+        # Out-of-range integers and NUL bytes are rejected by Postgres: the caller's mistake, not ours.
+        return page(
+            request,
+            "error.html",
+            status_code=400,
+            message="That value is out of range or not allowed.",
+        )
 
     @app.get("/healthz")
     def healthz():

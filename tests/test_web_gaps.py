@@ -71,3 +71,21 @@ def test_answer_field_check_from_the_page(web, gap, db_session):
     db_session.expire_all()
     assert repo.open_field_checks(db_session) == []
     assert repo.queued_tasks(db_session)[0].profile == "verify-gap"
+
+
+def test_proven_model_links_only_http_urls_and_tolerates_junk(web, gap, db_session):
+    pm = repo.upsert_proven_model(
+        db_session,
+        slug="pet-sitting",
+        name="Pet sitting",
+        sector_slug="pets",
+        description="d",
+        markets=[],
+    )
+    pm.source_urls = ["JavaScript:alert(1)", " HTTPS://example.com/a", None, 5]
+    gap.proven_model_id = pm.id
+    db_session.commit()
+    r = web.get(f"/gaps/{gap.id}")
+    assert r.status_code == 200
+    assert 'href="JavaScript' not in r.text and 'href="javascript' not in r.text
+    assert 'href="HTTPS://example.com/a"' in r.text
