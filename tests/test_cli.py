@@ -115,3 +115,13 @@ def test_run_installs_a_sigterm_handler_that_exits_143_and_restores_it(monkeypat
     with pytest.raises(SystemExit) as exc:
         cli.sigterm_to_exit(signal.SIGTERM, None)
     assert exc.value.code == 143
+
+
+def test_set_cap_and_cli_actions_are_journaled(db_session):
+    from scout.db.models import JournalEntry
+
+    assert runner.invoke(cli.app, ["set-cap", "1.25"]).exit_code == 0
+    assert runner.invoke(cli.app, ["set-cap", "abc"]).exit_code != 0
+    assert runner.invoke(cli.app, ["set-phase", "verification"]).exit_code == 0
+    did = db_session.query(JournalEntry).filter(JournalEntry.run_id.is_(None)).one().did_md
+    assert "set today's cap to €1.25" in did and "set phase to verification" in did
