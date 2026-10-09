@@ -334,3 +334,111 @@ def test_unknown_sector_slugs_are_rejected_with_the_valid_list(ctx):
     assert ctx.session.scalar(select(func.count()).select_from(Sector)) == before
     # empty sector stays optional where it was optional
     assert T.kb_search_impl(ctx, query="x") == "no facts yet"
+
+
+# ---------- I4: presence-check provenance ----------
+
+
+def _verify_ctx(ctx, profile="verify-gap"):
+    gap, _ = repo.propose_gap(ctx.session, title="Pet sitting", sector_slug="pets")
+    ctx.profile, ctx.payload = profile, {"gap_id": gap.id, "sector": "pets"}
+    return gap
+
+
+def _presence_fact(ctx, gap, verdict="absent", confidence=0.8, ttl_days=90):
+    return T.kb_record_fact_impl(
+        ctx,
+        claim=f"presence check: {verdict}",
+        entity_type="presence_check",
+        entity_key=f"gap:{gap.id}",
+        confidence=confidence,
+        sector="pets",
+        ttl_days=ttl_days,
+        value_json=json.dumps({"verdict": verdict, "places_by_city": {}}),
+    )
+
+
+def _searches(ctx, places=7, apps=1):
+    for i in range(places):
+        assert "places for" in T.places_search_impl(ctx, query="pet sitter", city=f"c{i}")
+    for _ in range(apps):
+        assert "apple: 1 results" in T.app_store_search_impl(ctx, term="pet sitter")
+
+
+def _presence_facts(ctx, gap):
+    from sqlalchemy import select
+
+    from scout.db.models import Fact
+
+    return list(
+        ctx.session.scalars(
+            select(Fact).where(
+                Fact.entity_type == "presence_check", Fact.entity_key == f"gap:{gap.id}"
+            )
+        )
+    )
+
+
+def test_presence_check_rejected_outside_verify_gap(ctx):
+    gap = _verify_ctx(ctx, profile="hunt-models")
+    _searches(ctx)
+    assert _presence_fact(ctx, gap).startswith("error: presence_check facts are written only")
+    ctx.profile = None
+    assert _presence_fact(ctx, gap).startswith("error: presence_check facts are written only")
+    assert _presence_facts(ctx, gap) == []
+
+
+def test_presence_check_rejected_for_another_gap(ctx):
+    gap = _verify_ctx(ctx)
+    _searches(ctx)
+    ctx.payload = {"gap_id": gap.id + 100}
+    assert _presence_fact(ctx, gap).startswith("error: this task may only record")
+    assert _presence_facts(ctx, gap) == []
+
+
+def test_presence_check_rejected_without_any_search_in_this_task(ctx):
+    gap = _verify_ctx(ctx)
+    assert _presence_fact(ctx, gap).startswith("error: run places_search")
+    assert _presence_facts(ctx, gap) == []
+    assert not repo.has_presence_check(ctx.session, gap, now=NOW)
+
+
+def test_presence_check_after_full_protocol_is_stored_with_counts_and_pinned_ttl(ctx):
+    gap = _verify_ctx(ctx)
+    _searches(ctx, places=7, apps=1)
+    assert _presence_fact(ctx, gap, ttl_days=365).startswith("fact #")
+    (fact,) = _presence_facts(ctx, gap)
+    assert fact.value["verdict"] == "absent" and not fact.value.get("degraded")
+    assert fact.value["protocol"] == {"places_searches": 7, "app_store_searches": 2}
+    assert fact.confidence == 0.8 and (fact.expires_at - fact.observed_at).days == 60
+    assert repo.has_presence_check(ctx.session, gap, now=NOW)
+    assert repo.latest_presence_check(ctx.session, gap, now=NOW).id == fact.id
+
+
+def test_partial_protocol_degrades_to_unknown_and_does_not_lift_the_cap(ctx):
+    gap = _verify_ctx(ctx)
+    _searches(ctx, places=2, apps=1)
+    assert _presence_fact(ctx, gap, verdict="absent", confidence=0.9).startswith("fact #")
+    (fact,) = _presence_facts(ctx, gap)
+    assert fact.value["verdict"] == "unknown" and fact.value["degraded"] is True
+    assert fact.value["claimed_verdict"] == "absent" and fact.confidence == 0.5
+    assert not repo.has_presence_check(ctx.session, gap, now=NOW)
+    assert repo.latest_presence_check(ctx.session, gap, now=NOW) is None
+
+
+def test_failed_places_calls_do_not_count_as_searches(ctx):
+    gap = _verify_ctx(ctx)
+    ctx.places = None  # no key: places_search says "unavailable"
+    for _ in range(7):
+        T.places_search_impl(ctx, query="x")
+    T.app_store_search_impl(ctx, term="x")
+    assert ctx.places_searches == 0 and ctx.app_store_searches == 2  # apple + play
+    _presence_fact(ctx, gap)
+    assert _presence_facts(ctx, gap)[0].value["verdict"] == "unknown"
+
+
+def test_invalid_verdict_is_stored_as_unknown(ctx):
+    gap = _verify_ctx(ctx)
+    _searches(ctx)
+    _presence_fact(ctx, gap, verdict="totally absent!!")
+    assert _presence_facts(ctx, gap)[0].value["verdict"] == "unknown"

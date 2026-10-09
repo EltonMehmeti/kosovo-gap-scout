@@ -119,6 +119,8 @@ Run the presence-check protocol completely — this is the anti-hallucination ru
    "web_hits": [...], "urls": [...]}}. Verdicts: absent (nothing in any channel), exists-but-poor (≤ 2 players,
    weak reviews or activity, or social-media-only), prishtina-only, offline-only (businesses exist but no
    digital product), decent (≥ 3 active players with digital products), unknown (sources degraded).
+   The system accepts this fact only after your searches in steps 1–2 and stores "unknown" if fewer than
+   seven Places searches or no app-store search actually ran.
 6. Save a payment_path fact (how a Kosovo customer could pay for this: card via local PSP, cash on delivery,
    bank transfer, in-app via Google/Apple billing) and the strongest why-not-yet facts.
 7. Call kb_propose_gap with the same title "{gap_title}", sector `{sector}`, presence_level set to the

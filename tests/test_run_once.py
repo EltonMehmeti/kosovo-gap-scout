@@ -528,3 +528,20 @@ def test_crash_after_claim_requeues_exactly_that_task(world, settings):
     claimed = [t for t in repo.tasks_for_run(s, run.id) if t.attempts == 0 and t.status == "queued"]
     assert claimed  # the crashed task was released with its attempt given back
     s.close()
+
+
+def test_tool_context_carries_task_profile_and_payload(world, settings, monkeypatch):
+    seen = []
+
+    def capture(self, task_id, profile, brief, ctx):
+        seen.append((ctx.profile, dict(ctx.payload)))
+        return TaskOutcome("done", "end_turn", 1, Decimal("0.01"), 0, 0, False, False)
+
+    monkeypatch.setattr(ResearchWorker, "run", capture)
+    R.run_once(
+        settings,
+        **_kw(world, client=_client(world["gap"].id), runner_factory=fake_runner_factory([], [])),
+    )
+    verify = [p for p in seen if p[0] == "verify-gap"]
+    assert verify and verify[0][1]["gap_id"] == world["gap"].id
+    assert {p[0] for p in seen} >= {"verify-gap", "map-sector"}

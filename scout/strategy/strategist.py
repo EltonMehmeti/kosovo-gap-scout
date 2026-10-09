@@ -11,7 +11,7 @@ from scout.db import repo
 from scout.db.models import GapAssessment as GapAssessmentRow
 from scout.llm.gateway import LLM
 from scout.strategy import schemas as S
-from scout.strategy.rubric import RUBRIC_TEXT, needs_field_check, score_gap
+from scout.strategy.rubric import PRESENCE_CAP, RUBRIC_TEXT, needs_field_check, score_gap
 
 MAX_FACTS_CHARS = 90_000  # ≈ 25k tokens
 VERIFIED_CHECK_MAX_AGE_DAYS = 30
@@ -75,6 +75,13 @@ class ApplyResult:
     new_gaps: int = 0
 
 
+def check_verdict(fact) -> str:
+    """The presence level recorded by the protocol run (the fact's `value["verdict"]`), never the model's
+    restatement of it. Anything unrecognised reads as "unknown"."""
+    verdict = (fact.value or {}).get("verdict") if isinstance(fact.value, dict) else None
+    return verdict if verdict in PRESENCE_CAP else "unknown"
+
+
 def _system(text: str) -> list[dict]:
     return [
         {"type": "text", "text": text},
@@ -113,6 +120,7 @@ class Strategist:
         for g in repo.list_gaps(
             s, statuses=["candidate", "verifying", "verified", "parked"], sector_slugs=sector_slugs
         ):
+            check = repo.latest_presence_check(s, g, now=now)
             gaps.append(
                 {
                     "id": g.id,
@@ -122,7 +130,8 @@ class Strategist:
                     "score": g.score_total,
                     "confidence": g.confidence,
                     "presence_level": g.presence_level,
-                    "has_presence_check": repo.has_presence_check(s, g, now=now),
+                    "has_presence_check": check is not None,
+                    "presence_check_verdict": check_verdict(check) if check else None,
                     "hypothesis": g.hypothesis_md[:600],
                     "why_not_yet": g.why_not_yet_md[:400],
                     "components": g.score_components or {},
@@ -222,11 +231,12 @@ class Strategist:
                 max(a.scores.risk_penalty, v.risk_penalty) if v else a.scores.risk_penalty
             )
             confidence = min(a.confidence, v.confidence) if v else a.confidence
-            has_check_60 = repo.has_presence_check(s, gap, now=now, max_age_days=60)
+            check = repo.latest_presence_check(s, gap, now=now, max_age_days=60)
+            has_check_60 = check is not None
             has_check_30 = repo.has_presence_check(
                 s, gap, now=now, max_age_days=VERIFIED_CHECK_MAX_AGE_DAYS
             )
-            presence = a.presence_level if has_check_60 else (gap.presence_level or "unknown")
+            presence = check_verdict(check) if check else (gap.presence_level or "unknown")
             score = score_gap(
                 proof=a.scores.proof,
                 absence=a.scores.absence,

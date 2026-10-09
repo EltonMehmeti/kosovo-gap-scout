@@ -138,15 +138,31 @@ def fresh_facts_since(
     return list(session.scalars(stmt.order_by(Fact.confidence.desc()).limit(400)))
 
 
+def latest_presence_check(
+    session: Session, gap: Gap, *, now: datetime, max_age_days: int = 60
+) -> Fact | None:
+    """Newest unexpired presence_check fact for the gap from a complete protocol run (a `degraded`
+    check — too few real searches in its task — is kept as evidence but never lifts the cap)."""
+    stmt = (
+        select(Fact)
+        .where(
+            Fact.entity_type == "presence_check",
+            Fact.entity_key == f"gap:{gap.id}",
+            Fact.observed_at >= now - timedelta(days=max_age_days),
+            Fact.expires_at > now,
+        )
+        .order_by(Fact.observed_at.desc(), Fact.id.desc())
+    )
+    for fact in session.scalars(stmt):
+        if not (isinstance(fact.value, dict) and fact.value.get("degraded")):
+            return fact
+    return None
+
+
 def has_presence_check(
     session: Session, gap: Gap, *, now: datetime, max_age_days: int = 60
 ) -> bool:
-    stmt = select(Fact).where(
-        Fact.entity_type == "presence_check",
-        Fact.entity_key == f"gap:{gap.id}",
-        Fact.observed_at >= now - timedelta(days=max_age_days),
-    )
-    return session.scalars(stmt).first() is not None
+    return latest_presence_check(session, gap, now=now, max_age_days=max_age_days) is not None
 
 
 # ---------- sectors, digests ----------

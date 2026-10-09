@@ -400,6 +400,8 @@ def _run_body(
                         task_id=task.id,
                         places=places,
                         askdata=askdata,
+                        profile=task.profile,
+                        payload=payload,
                     )
                     outcome = worker.run(task.id, profile, brief, ctx)
                     result_md, cost = outcome.summary_md, outcome.cost_eur

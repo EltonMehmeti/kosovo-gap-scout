@@ -39,6 +39,14 @@ PRESENCE_LEVELS = (
     "unknown",
 )
 DIGEST_PREFIXES = ("sector:", "culture:", "country")
+# Presence-check provenance (spec B8, review I4): the fact that lifts the rubric's absence/confidence cap may
+# only be written by a verify-gap task, for its own gap, after real searches ran in that same task. Below
+# these minimums (one Places search per city, one app-store search) the verdict is stored as "unknown".
+PRESENCE_CHECK_PROFILE = "verify-gap"
+PRESENCE_CHECK_TTL_DAYS = 60
+MIN_PLACES_SEARCHES = 7
+MIN_APP_STORE_SEARCHES = 1
+DEGRADED_CHECK_MAX_CONFIDENCE = 0.5
 KB_RESULT_LIMIT = 2000
 SOURCE_RESULT_LIMIT = 1200
 DIGEST_CHAR_LIMIT = 5000  # ≈ 1,200 tokens (spec B13)
@@ -71,6 +79,10 @@ class ToolContext:
     play_search: Callable = play.search_apps
     places_monthly_quota: int = 4500
     events: list[dict] = field(default_factory=list)
+    profile: str | None = None  # the task's profile name (provenance for presence checks)
+    payload: dict = field(default_factory=dict)  # the task's payload (gap_id for verify-gap)
+    places_searches: int = 0  # Places searches that actually returned in this task
+    app_store_searches: int = 0  # app-store searches that actually returned in this task
 
 
 def _clip(text: str, limit: int) -> str:
@@ -164,13 +176,22 @@ def kb_record_fact_impl(
             value = json.loads(value_json)
         except json.JSONDecodeError:
             value = {"raw": value_json[:500]}
+    if not isinstance(value, dict | None):
+        value = {"raw": value}
+    confidence = min(max(float(confidence), 0.0), 1.0)
+    if entity_type == "presence_check":
+        checked = _presence_check(ctx, entity_key.strip(), value, confidence)
+        if isinstance(checked, str):
+            return checked
+        value, confidence = checked
+        ttl_days = PRESENCE_CHECK_TTL_DAYS
     fact = repo.upsert_fact(
         ctx.session,
         FactIn(
             claim=claim,
             entity_type=entity_type,
             entity_key=_fit(entity_key, W_ENTITY_KEY),
-            confidence=min(max(float(confidence), 0.0), 1.0),
+            confidence=confidence,
             source_url=_or_none(source_url),
             sector_slug=_or_none(sector),
             value=value,
@@ -180,6 +201,36 @@ def kb_record_fact_impl(
         observed_at=ctx.now,
     )
     return f"fact #{fact.id} saved (confidence {fact.confidence:.2f}, expires {fact.expires_at.date()})"
+
+
+def _presence_check(
+    ctx: ToolContext, entity_key: str, value: dict | None, confidence: float
+) -> tuple[dict, float] | str:
+    """Validate a presence_check write; return (value, confidence) to store, or the error text."""
+    if ctx.profile != PRESENCE_CHECK_PROFILE:
+        return (
+            "error: presence_check facts are written only by verify-gap tasks; record what you "
+            "found as entity_type 'gap' or 'business' instead"
+        )
+    gap_id = ctx.payload.get("gap_id")
+    if entity_key != f"gap:{gap_id}":
+        return f"error: this task may only record the presence check for 'gap:{gap_id}'"
+    if ctx.places_searches + ctx.app_store_searches == 0:
+        return "error: run places_search and app_store_search first (presence-check protocol)"
+    value = dict(value or {})
+    claimed = value.get("verdict")
+    verdict = claimed if claimed in PRESENCE_LEVELS else "unknown"
+    value["protocol"] = {
+        "places_searches": ctx.places_searches,
+        "app_store_searches": ctx.app_store_searches,
+    }
+    if ctx.places_searches < MIN_PLACES_SEARCHES or ctx.app_store_searches < MIN_APP_STORE_SEARCHES:
+        value["degraded"] = True
+        value["claimed_verdict"] = claimed
+        verdict = "unknown"
+        confidence = min(confidence, DEGRADED_CHECK_MAX_CONFIDENCE)
+    value["verdict"] = verdict
+    return value, confidence
 
 
 def kb_record_business_impl(
@@ -308,6 +359,7 @@ def places_search_impl(ctx: ToolContext, query: str, city: str = "", language: s
     q = f"{query.strip()} {city.strip()}".strip()
     try:
         result = ctx.places.text_search(q, language=language or "sq")
+        ctx.places_searches += 1
     finally:  # a failed request may still have been billed
         ctx.guard.record(
             CostRecord("places", "google", None, {"calls": 1}, Decimal("0"), task_id=ctx.task_id)
@@ -325,6 +377,7 @@ def app_store_search_impl(ctx: ToolContext, term: str, store: str = "both") -> s
     if store in ("apple", "both"):
         try:
             hits = ctx.apple_search(term, country="xk", limit=8)
+            ctx.app_store_searches += 1
             lines.append(f"apple: {len(hits)} results")
             lines += [f"- [apple] {h.name} — {h.publisher} <{h.url}>" for h in hits]
         except Exception as e:  # noqa: BLE001 — a dead source must not kill the task
@@ -332,6 +385,7 @@ def app_store_search_impl(ctx: ToolContext, term: str, store: str = "both") -> s
     if store in ("play", "both"):
         try:
             hits = ctx.play_search(term, country="xk", lang="sq", limit=8)
+            ctx.app_store_searches += 1
             lines.append(f"play: {len(hits)} results")
             lines += [f"- [play] {h.name} — {h.publisher} <{h.url}>" for h in hits]
         except Exception as e:  # noqa: BLE001

@@ -249,3 +249,49 @@ def test_apply_limits_open_field_checks_and_creates_new_gaps(db_session, seeded)
         result.new_gaps == 1
         and repo.get_gap_by_title(db_session, "pets", "Dog walking app") is not None
     )
+
+
+def test_apply_takes_presence_from_the_stored_verdict_not_the_model(db_session, seeded):
+    repo.upsert_fact(
+        db_session,
+        FactIn(
+            claim="presence check: exists-but-poor",
+            entity_type="presence_check",
+            entity_key=f"gap:{seeded.id}",
+            confidence=0.8,
+            value={"verdict": "exists-but-poor"},
+            ttl_days=60,
+        ),
+        run_id=1,
+        observed_at=NOW,
+    )
+    st = _strategist(db_session, [])
+    out = S.StrategistOutput(
+        assessments=[_assessment(seeded.id, presence_level="absent")], new_gaps=[], headline="h"
+    )
+    st.apply(out, S.CriticOutput(verdicts=[]), now=NOW, run_id=8)
+    gap = repo.get_gap(db_session, seeded.id)
+    assert gap.presence_level == "exists-but-poor" and gap.score_components["absence"] == 18
+    inputs = st.collect_inputs(since=NOW - timedelta(hours=1), now=NOW)
+    assert inputs.gaps[0]["presence_check_verdict"] == "exists-but-poor"
+
+
+def test_degraded_presence_check_keeps_the_no_check_caps(db_session, seeded):
+    repo.upsert_fact(
+        db_session,
+        FactIn(
+            claim="presence check: unknown",
+            entity_type="presence_check",
+            entity_key=f"gap:{seeded.id}",
+            confidence=0.5,
+            value={"verdict": "unknown", "degraded": True, "claimed_verdict": "absent"},
+            ttl_days=60,
+        ),
+        run_id=1,
+        observed_at=NOW,
+    )
+    st = _strategist(db_session, [])
+    out = S.StrategistOutput(assessments=[_assessment(seeded.id)], new_gaps=[], headline="h")
+    st.apply(out, S.CriticOutput(verdicts=[]), now=NOW, run_id=8)
+    gap = repo.get_gap(db_session, seeded.id)
+    assert gap.score_components["absence"] == 12 and gap.confidence == 0.5
