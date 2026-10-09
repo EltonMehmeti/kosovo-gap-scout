@@ -14,6 +14,11 @@ dependencies = [
   "typer>=0.12",
   "rich>=13.7",
   "google-play-scraper>=1.2.7",
+  "fastapi>=0.115",
+  "jinja2>=3.1",
+  "uvicorn[standard]>=0.30",
+  "python-multipart>=0.0.9",
+  "markdown-it-py>=3",
 ]
 
 [project.optional-dependencies]
@@ -45,3 +50,6 @@ markers = [
   "network: hits real external services (skipped by default)",
   "db: needs TEST_DATABASE_URL",
 ]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Form", "fastapi.Query"]

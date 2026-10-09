@@ -67,5 +67,21 @@ def settings(test_db_url) -> Settings:
         _env_file=None,
         ANTHROPIC_API_KEY="sk-test",
         DATABASE_URL=test_db_url,
+        DASHBOARD_TOKEN="test-dashboard-token",
         daily_budget_eur=Decimal("3.00"),
     )
+
+
+@pytest.fixture
+def web(db_session, db_engine, settings):
+    """A logged-in dashboard client over the (truncated) test database."""
+    from fastapi.testclient import TestClient
+
+    from scout.web.app import create_app
+
+    client = TestClient(
+        create_app(settings, make_session_factory(db_engine)), base_url="https://testserver"
+    )
+    r = client.post("/login", data={"token": settings.dashboard_token}, follow_redirects=False)
+    assert r.status_code == 303
+    return client

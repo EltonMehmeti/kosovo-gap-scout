@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     database_url: str = Field(alias="DATABASE_URL")
     google_places_api_key: str | None = Field(default=None, alias="GOOGLE_PLACES_API_KEY")
     apify_token: str | None = Field(default=None, alias="APIFY_TOKEN")
+    dashboard_token: str | None = Field(default=None, alias="DASHBOARD_TOKEN")
 
     phase: str = "foundation"
     daily_budget_eur: Decimal = Decimal("3.00")
