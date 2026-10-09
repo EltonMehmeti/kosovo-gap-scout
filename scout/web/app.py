@@ -21,7 +21,10 @@ from scout.web.pages import (
     today,
 )
 
-LOCKED = "DASHBOARD_TOKEN is not set; the dashboard is locked."
+LOCKED = (
+    "DASHBOARD_TOKEN is not set or too short; the dashboard is locked. "
+    f"The token must be at least {auth.MIN_TOKEN_LENGTH} characters."
+)
 
 
 def create_app(settings: Settings, session_factory) -> FastAPI:
@@ -33,9 +36,10 @@ def create_app(settings: Settings, session_factory) -> FastAPI:
     async def require_login(request: Request, call_next):
         if request.url.path in auth.OPEN_PATHS:
             return await call_next(request)
-        if not settings.dashboard_token:
+        token = auth.usable_token(settings)
+        if token is None:
             return PlainTextResponse(LOCKED, status_code=503)
-        if not auth.is_logged_in(request, settings.dashboard_token):
+        if not auth.is_logged_in(request, token):
             return RedirectResponse("/login", status_code=303)
         return await call_next(request)
 
@@ -59,8 +63,8 @@ def create_app(settings: Settings, session_factory) -> FastAPI:
 
     @app.post("/login")
     def login(request: Request, token: str = Form("")):
-        expected = settings.dashboard_token
-        if not expected:
+        expected = auth.usable_token(settings)
+        if expected is None:
             return PlainTextResponse(LOCKED, status_code=503)
         if not auth.token_matches(token, expected):
             return page(request, "login.html", status_code=401, err="Wrong token.")

@@ -54,6 +54,21 @@ def test_unset_token_locks_the_dashboard(db_session, db_engine, settings):
     assert c.get("/healthz").status_code == 200
 
 
+def test_short_token_locks_like_an_unset_one(db_session, db_engine, settings):
+    c = _client(settings, db_engine, dashboard_token="x" * 15)
+    r = c.get("/", follow_redirects=False)
+    assert r.status_code == 503 and "at least 16 characters" in r.text
+    assert c.post("/login", data={"token": "x" * 15}).status_code == 503
+    assert c.get("/healthz").status_code == 200
+
+
+def test_sixteen_character_token_works(db_session, db_engine, settings):
+    c = _client(settings, db_engine, dashboard_token="x" * 16)
+    r = c.post("/login", data={"token": "x" * 16}, follow_redirects=False)
+    assert r.status_code == 303
+    assert c.get("/").status_code == 200
+
+
 def test_today_with_an_empty_database(web):
     r = web.get("/")
     assert r.status_code == 200 and "No brief yet" in r.text
