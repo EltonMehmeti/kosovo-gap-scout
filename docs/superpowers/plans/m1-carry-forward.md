@@ -24,6 +24,10 @@ Each was judged non-blocking for the first live runs. Pick these up when plannin
   cover at least 2 countries, at least 1 of them nearby. Confirm the research workers record
   these URLs before the Verification phase starts on 2026-11-16.
 
+- **Truncated tasks look done in the brief.** A task cut off by `max_tokens` still shows
+  "done" in the brief. It is correctly not applied, for example the sector is not marked
+  mapped. Show "cut short" instead. Seen live on 2026-10-09 before the cap was raised to 16000.
+
 ## Strategy / verification
 
 - When the Critic raises a new `needs_field_check` question on the day a gap verifies, the
