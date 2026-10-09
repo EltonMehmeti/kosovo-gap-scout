@@ -1,0 +1,106 @@
+{# Shared UI macros. Import in every page: {% import "_ui.html" as ui with context %} #}
+
+{% macro icon(name, cls="") -%}
+<svg class="icon{{ ' ' ~ cls if cls }}" aria-hidden="true" focusable="false"><use href="/static/icons.svg?v={{ ASSET_VERSION }}#i-{{ name }}"></use></svg>
+{%- endmacro %}
+
+{% macro chip(text, tone="gray", title="", cls="") -%}
+<span{% if title %} title="{{ title }}"{% endif %} class="chip chip-{{ tone }}{{ ' ' ~ cls if cls }}">{{ text }}</span>
+{%- endmacro %}
+
+{% macro status_chip(kind, value) -%}
+{%- if kind == "task" %}{% set l = task_label(value) %}{% elif kind == "run" %}{% set l = run_label(value) %}{% else %}{% set l = status_label(value) %}{% endif -%}
+{{ chip(l.text, l.tone, l.tip) }}
+{%- endmacro %}
+
+{% macro date(d) -%}
+{%- if d %}<time datetime="{{ d | iso }}" title="{{ d | iso }}">{{ d | when }}</time>{% else %}—{% endif -%}
+{%- endmacro %}
+
+{% macro tabs(items, active) -%}
+<nav class="tabs" aria-label="Pages in this section">
+  {%- for href, label in items %}<a href="{{ href }}"{% if href == active %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor -%}
+</nav>
+{%- endmacro %}
+
+{% macro page_header(title, subtitle="") -%}
+<header class="page-head">
+  <div class="page-head-text">
+    <h1>{{ title }}</h1>
+    {% if subtitle %}<p class="subtitle">{{ subtitle }}</p>{% endif %}
+  </div>
+  {% if caller is defined %}<div class="page-actions">{{ caller() }}</div>{% endif %}
+</header>
+{%- set items = SECTION_TABS.get(active_section(request.url.path)) -%}
+{%- if items and request.url.path in items | map("first") | list %}
+{{ tabs(items, request.url.path) }}
+{%- endif %}
+{%- endmacro %}
+
+{% macro score_bar(score) -%}
+{%- set band = score_band(score) -%}
+{%- if score is none -%}
+<div class="score">{{ chip(band[0], band[1], "The scout has not scored this gap yet.") }}</div>
+{%- else -%}
+{%- set w = [[score, 0] | max, 100] | min -%}
+<div class="score" title="Score {{ score }} of 100 ({{ band[0] }})">
+  <span class="meter" role="meter" aria-label="Score" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ w }}"><span class="meter-fill fill-{{ band[1] }}" style="width:{{ w }}%"></span></span>
+  <span class="score-num">{{ score }}</span><span class="score-word">{{ band[0] }}</span>
+</div>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro part_bar(label, value, top) -%}
+{%- set v = [[value or 0, 0] | max, top] | min -%}
+<div class="part">
+  <span class="part-label">{{ label }}</span>
+  <span class="meter"><span class="meter-fill fill-indigo" style="width:{{ (v / top * 100) | round(1) }}%"></span></span>
+  <span class="part-num">{{ v }}/{{ top }}</span>
+</div>
+{%- endmacro %}
+
+{% macro stat_tile(label, value, sub="", href="", progress=none, icon_name="") -%}
+{%- set body -%}
+  <span class="tile-label">{% if icon_name %}{{ icon(icon_name) }}{% endif %}{{ label }}</span>
+  <span class="tile-value">{{ value }}</span>
+  {% if sub %}<span class="tile-sub">{{ sub }}</span>{% endif %}
+  {% if progress is not none %}{% set p = [[progress | float, 0] | max, 100] | min %}<span class="meter" aria-hidden="true"><span class="meter-fill {{ 'fill-red' if p >= 100 else 'fill-amber' if p >= 80 else 'fill-indigo' }}" style="width:{{ p | round(1) }}%"></span></span>{% endif %}
+{%- endset -%}
+{%- if href %}<a class="tile" href="{{ href }}">{{ body }}</a>{% else %}<div class="tile">{{ body }}</div>{% endif -%}
+{%- endmacro %}
+
+{% macro empty_state(icon_name, text, href="", link_text="") -%}
+<div class="empty">{{ icon(icon_name, "empty-icon") }}<p>{{ text }}</p>{% if href %}<a class="btn sm" href="{{ href }}">{{ link_text }}</a>{% endif %}</div>
+{%- endmacro %}
+
+{% macro post_button(action, label, fields={}, cls="", icon_name="", confirm="") -%}
+<form class="inline" method="post" action="{{ action }}"{% if confirm %} data-confirm="{{ confirm }}"{% endif %}>
+  {%- for k, v in fields.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor -%}
+  <button class="btn{{ ' ' ~ cls if cls }}">{% if icon_name %}{{ icon(icon_name) }}{% endif %}<span>{{ label }}</span></button>
+</form>
+{%- endmacro %}
+
+{% macro confirm_button(action, label, message, fields={}, cls="danger", icon_name="x") -%}
+{{ post_button(action, label, fields, cls, icon_name, message) }}
+{%- endmacro %}
+
+{% macro gap_actions(g, finalists, flagged, next) -%}
+{%- set status_url = "/gaps/%d/status" | format(g.id) -%}
+{%- set flag_url = "/gaps/%d/flag" | format(g.id) -%}
+<div class="actions">
+  {%- if g.status != "killed" %}
+    {%- if g.id in flagged %}{{ post_button(flag_url, "Cancel check", {"next": next, "unflag": "1"}, "sm", "x") }}
+    {%- else %}{{ post_button(flag_url, "Check this again", {"next": next}, "sm", "refresh-cw") }}{% endif %}
+    {{ post_button("/gaps/%d/finalist" | format(g.id), "Remove finalist" if g.id in finalists else "Make finalist", {"next": next}, "sm", "star") }}
+  {%- endif %}
+  {%- if g.status not in ("parked", "killed") %}
+    {{ post_button(status_url, "Put on hold", {"next": next, "action": "park"}, "sm", "pause") }}
+  {%- endif %}
+  {%- if g.status != "killed" %}
+    {{ confirm_button(status_url, "Reject", "Reject this gap? It stays rejected until you reopen it.", {"next": next, "action": "kill"}, "sm danger") }}
+  {%- endif %}
+  {%- if g.status in ("parked", "killed") %}
+    {{ post_button(status_url, "Reopen", {"next": next, "action": "reopen"}, "sm", "rotate-ccw") }}
+  {%- endif %}
+</div>
+{%- endmacro %}

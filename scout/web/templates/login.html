@@ -1,11 +1,15 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% set hide_nav = True %}
 {% block title %}Log in{% endblock %}
 {% block content %}
-<h1>Kosovo Gap Scout</h1>
-<form method="post" action="/login" class="card">
-  <label for="token">Dashboard token</label><br>
-  <input id="token" name="token" type="password" autocomplete="current-password" required autofocus>
-  <button class="primary">Log in</button>
-</form>
+<div class="card auth-card">
+  <div class="brand">{{ ui.icon("target") }}<span>Gap Scout</span></div>
+  <p class="muted">Your daily scout for business gaps in Kosovo.</p>
+  <form method="post" action="/login" class="form-stack">
+    <label for="token">Dashboard token</label>
+    <input id="token" name="token" type="password" autocomplete="current-password" required autofocus>
+    <button class="btn primary block">Log in</button>
+  </form>
+</div>
 {% endblock %}

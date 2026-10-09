@@ -11,6 +11,7 @@ from fastapi import Request
 
 COOKIE = "scout_auth"
 OPEN_PATHS = frozenset({"/login", "/logout", "/healthz"})
+STATIC_PREFIX = "/static/"  # CSS, JS, fonts and icons: the login page needs them before login
 MAX_AGE = 60 * 60 * 24 * 30  # 30 days
 MIN_TOKEN_LENGTH = 16
 

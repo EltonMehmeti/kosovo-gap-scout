@@ -5,11 +5,12 @@ from __future__ import annotations
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import DataError
 
 from scout.config import Settings
 from scout.web import auth
-from scout.web.deps import page
+from scout.web.deps import STATIC_DIR, page
 from scout.web.pages import (
     costs,
     field_checks,
@@ -34,7 +35,13 @@ def create_app(settings: Settings, session_factory) -> FastAPI:
 
     @app.middleware("http")
     async def require_login(request: Request, call_next):
-        if request.url.path in auth.OPEN_PATHS:
+        path = request.url.path
+        if path.startswith(auth.STATIC_PREFIX):
+            response = await call_next(request)
+            if response.status_code == 200:  # asset URLs carry ?v=<hash>, so a day is safe
+                response.headers["Cache-Control"] = "public, max-age=86400"
+            return response
+        if path in auth.OPEN_PATHS:
             return await call_next(request)
         token = auth.usable_token(settings)
         if token is None:
@@ -93,6 +100,7 @@ def create_app(settings: Settings, session_factory) -> FastAPI:
         resp.delete_cookie(auth.COOKIE)
         return resp
 
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     for module in (today, gaps, field_checks, pipeline, knowledge, journal, costs, settings_page):
         app.include_router(module.router)
     return app

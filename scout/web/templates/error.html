@@ -1,7 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Error{% endblock %}
+{% import "_ui.html" as ui with context %}
+{% set hide_nav = True %}
+{% block title %}Something went wrong{% endblock %}
 {% block content %}
-<h1>Error</h1>
-<p class="flash err">{{ message }}</p>
-<p><a href="/">← Today</a></p>
+<div class="card auth-card">
+  {{ ui.empty_state("triangle-alert", message, "/", "Back to Home") }}
+</div>
 {% endblock %}
