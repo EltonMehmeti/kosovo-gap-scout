@@ -165,6 +165,28 @@ def has_presence_check(
     return latest_presence_check(session, gap, now=now, max_age_days=max_age_days) is not None
 
 
+def has_fact(session: Session, *, entity_type: str, entity_key: str, now: datetime) -> bool:
+    stmt = select(Fact.id).where(
+        Fact.entity_type == entity_type, Fact.entity_key == entity_key, Fact.expires_at > now
+    )
+    return session.scalars(stmt).first() is not None
+
+
+def proof_citations(session: Session, gap: Gap) -> tuple[int, int]:
+    """(cited markets, cited nearby markets) for the gap's proven model — the stored signal behind spec
+    A10's "≥ 2 proof-elsewhere citations (≥ 1 nearby)". A citation is a distinct market country in
+    `ProvenModel.markets` whose entry carries a source URL; a market named without a URL does not count."""
+    if gap.proven_model_id is None:
+        return 0, 0
+    pm = session.get(ProvenModel, gap.proven_model_id)
+    countries = {
+        str(m.get("country", "")).strip().upper()
+        for m in (pm.markets or [] if pm else [])
+        if isinstance(m, dict) and str(m.get("url") or "").strip() and m.get("country")
+    }
+    return len(countries), len(countries & NEARBY)
+
+
 # ---------- sectors, digests ----------
 
 
@@ -728,6 +750,13 @@ def open_field_checks(session: Session) -> list[FieldCheck]:
             .order_by(FieldCheck.due, FieldCheck.id)
         )
     )
+
+
+def field_check_counts(session: Session, gap_id: int) -> tuple[int, int]:
+    """(open, answered) field checks for one gap."""
+    rows = session.scalars(select(FieldCheck.status).where(FieldCheck.gap_id == gap_id))
+    statuses = list(rows)
+    return statuses.count("open"), statuses.count("answered")
 
 
 def answer_field_check(

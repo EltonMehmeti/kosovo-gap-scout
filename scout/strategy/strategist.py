@@ -16,6 +16,9 @@ from scout.strategy.rubric import PRESENCE_CAP, RUBRIC_TEXT, needs_field_check, 
 MAX_FACTS_CHARS = 90_000  # ≈ 25k tokens
 VERIFIED_CHECK_MAX_AGE_DAYS = 30
 VERIFIED_MIN_CONFIDENCE = 0.7
+VERIFIED_MIN_SCORE = 60  # the verifying threshold: a verified gap must at least be worth verifying
+VERIFIED_MIN_CITATIONS = 2
+VERIFIED_MIN_NEARBY_CITATIONS = 1
 
 STRATEGIST_SYSTEM = """You are the Strategist of Kosovo Gap Scout. Once a day you read what the research workers
 learned and judge each tracked gap: a consumer business model proven elsewhere that may be missing in Kosovo,
@@ -80,6 +83,45 @@ def check_verdict(fact) -> str:
     restatement of it. Anything unrecognised reads as "unknown"."""
     verdict = (fact.value or {}).get("verdict") if isinstance(fact.value, dict) else None
     return verdict if verdict in PRESENCE_CAP else "unknown"
+
+
+def verified_gate_failures(session, gap, v: S.CriticVerdict | None, score, *, now) -> list[str]:
+    """Spec A10, enforced in Python from stored data. Empty list = the gap may become `verified`.
+
+    - presence check ≤ 30 days old from a complete protocol run, with a verdict other than unknown;
+    - ≥ 2 cited proof-elsewhere markets, ≥ 1 nearby (repo.proof_citations);
+    - a payment_path fact keyed gap:<id>;
+    - a Critic verdict for this gap in this run: `proceed`, or `needs_field_check` with the gap's field
+      checks answered (≥ 1 answered, none open) — no verdict means no review, so no `verified`;
+    - no open field check for the gap; confidence ≥ 0.7; score ≥ 60.
+    """
+    fails: list[str] = []
+    check = repo.latest_presence_check(
+        session, gap, now=now, max_age_days=VERIFIED_CHECK_MAX_AGE_DAYS
+    )
+    if check is None:
+        fails.append(f"no presence check ≤ {VERIFIED_CHECK_MAX_AGE_DAYS} days")
+    elif check_verdict(check) == "unknown":
+        fails.append("presence verdict unknown")
+    cited, nearby = repo.proof_citations(session, gap)
+    if cited < VERIFIED_MIN_CITATIONS or nearby < VERIFIED_MIN_NEARBY_CITATIONS:
+        fails.append(f"proof citations {cited} ({nearby} nearby)")
+    if not repo.has_fact(session, entity_type="payment_path", entity_key=f"gap:{gap.id}", now=now):
+        fails.append("no payment path")
+    open_n, answered_n = repo.field_check_counts(session, gap.id)
+    if open_n:
+        fails.append("open field check")
+    if v is None:
+        fails.append("no critic review")
+    elif v.decision == "needs_field_check" and answered_n == 0:
+        fails.append("critic wants a field check")
+    elif v.decision not in ("proceed", "needs_field_check"):
+        fails.append(f"critic says {v.decision}")
+    if score.confidence < VERIFIED_MIN_CONFIDENCE:
+        fails.append(f"confidence {score.confidence:.2f}")
+    if score.total < VERIFIED_MIN_SCORE:
+        fails.append(f"score {score.total}")
+    return fails
 
 
 def _system(text: str) -> list[dict]:
@@ -175,18 +217,26 @@ class Strategist:
     def critique(
         self, output: S.StrategistOutput, inputs: StrategyInputs, today: date, top_n: int = 3
     ) -> S.CriticOutput:
-        ranked = sorted(
-            output.assessments,
-            key=lambda a: (
-                -(
-                    a.scores.proof
-                    + a.scores.absence
-                    + a.scores.demand
-                    + a.scores.founder_fit
-                    - a.scores.risk_penalty
-                )
-            ),
-        )
+        known = {g["id"]: g for g in inputs.gaps}
+
+        def capped_total(a: S.GapAssessment) -> int:
+            """The total the rubric will actually give (presence caps applied), not the raw sum."""
+            g = known.get(a.gap_id, {})
+            return score_gap(
+                proof=a.scores.proof,
+                absence=a.scores.absence,
+                demand=a.scores.demand,
+                founder_fit=a.scores.founder_fit,
+                risk_penalty=a.scores.risk_penalty,
+                presence_level=g.get("presence_check_verdict")
+                or g.get("presence_level")
+                or "unknown",
+                has_presence_check=bool(g.get("has_presence_check")),
+                hard_filter_failed=None if a.hard_filter_failed == "none" else a.hard_filter_failed,
+                confidence=a.confidence,
+            ).total
+
+        ranked = sorted(output.assessments, key=lambda a: (-capped_total(a), a.gap_id))
         top = ranked[:top_n]
         if not top:
             return S.CriticOutput(verdicts=[])
@@ -233,9 +283,10 @@ class Strategist:
             confidence = min(a.confidence, v.confidence) if v else a.confidence
             check = repo.latest_presence_check(s, gap, now=now, max_age_days=60)
             has_check_60 = check is not None
-            has_check_30 = repo.has_presence_check(
+            check_30 = repo.latest_presence_check(
                 s, gap, now=now, max_age_days=VERIFIED_CHECK_MAX_AGE_DAYS
             )
+            check_30_ok = check_30 is not None and check_verdict(check_30) != "unknown"
             presence = check_verdict(check) if check else (gap.presence_level or "unknown")
             score = score_gap(
                 proof=a.scores.proof,
@@ -249,6 +300,7 @@ class Strategist:
                 confidence=confidence,
             )
             old_status, old_score = gap.status, gap.score_total
+            blocked: list[str] = []
             question = (
                 v.field_check_question if v and v.field_check_question else a.field_check_question
             ).strip()
@@ -259,15 +311,19 @@ class Strategist:
                 new_status, flag = "parked", "critic-says-kill"
             elif v and v.decision == "park":
                 new_status = "parked"
+            elif (
+                old_status == "verified"
+                and check_30_ok
+                and score.confidence >= VERIFIED_MIN_CONFIDENCE
+            ):
+                # verified is demoted only by a Critic park/kill, an expired check or confidence < 0.7
+                new_status = "verified"
             elif a.recommended_status == "killed":
                 new_status, flag = "parked", "strategist-says-kill"
             elif a.recommended_status == "parked":
                 new_status = "parked"
-            elif (
-                a.recommended_status == "verified"
-                and has_check_30
-                and score.confidence >= VERIFIED_MIN_CONFIDENCE
-                and not (v and v.decision == "needs_field_check")
+            elif a.recommended_status == "verified" and not (
+                blocked := verified_gate_failures(s, gap, v, score, now=now)
             ):
                 new_status = "verified"
             elif score.total >= 60:
@@ -277,7 +333,12 @@ class Strategist:
             wants_check = (v and v.decision == "needs_field_check") or needs_field_check(
                 score.total, score.confidence
             )
-            if wants_check and question and open_checks < max_open_field_checks:
+            if (
+                wants_check
+                and question
+                and new_status != "verified"
+                and open_checks < max_open_field_checks
+            ):
                 repo.add_field_check(
                     s,
                     gap_id=gap.id,
@@ -317,7 +378,8 @@ class Strategist:
                         old_score,
                         score.total,
                         score.confidence,
-                        (a.reasoning or "")[:200],
+                        (a.reasoning or "")[:200]
+                        + (f" (not verified: {'; '.join(blocked)})" if blocked else ""),
                     )
                 )
         for idea in output.new_gaps:

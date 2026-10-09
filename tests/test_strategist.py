@@ -137,43 +137,255 @@ def test_apply_caps_absence_without_presence_check_and_merges_critic(db_session,
     )
 
 
-def test_apply_verifies_only_with_fresh_check_and_confidence(db_session, seeded):
+def _presence(db_session, gap, *, verdict="absent", observed_at=NOW, key=None):
     repo.upsert_fact(
         db_session,
         FactIn(
-            claim="presence check: absent",
+            claim=f"presence check: {verdict} ({observed_at.date()})",
             entity_type="presence_check",
-            entity_key=f"gap:{seeded.id}",
+            entity_key=key or f"gap:{gap.id}",
             confidence=0.8,
             sector_slug="pets",
-            value={"verdict": "absent"},
+            value={"verdict": verdict},
             ttl_days=60,
+        ),
+        run_id=1,
+        observed_at=observed_at,
+    )
+
+
+def _payment_path(db_session, gap_id):
+    repo.upsert_fact(
+        db_session,
+        FactIn(
+            claim="Customers can pay by card through a local PSP",
+            entity_type="payment_path",
+            entity_key=f"gap:{gap_id}",
+            confidence=0.7,
+            sector_slug="pets",
         ),
         run_id=1,
         observed_at=NOW,
     )
+
+
+def _proven_model(db_session, gap, markets):
+    pm = repo.upsert_proven_model(
+        db_session,
+        slug="pet-sitting",
+        name="Pet sitting",
+        sector_slug="pets",
+        description="d",
+        markets=markets,
+    )
+    gap.proven_model_id = pm.id
+    db_session.commit()
+
+
+CITED = [
+    {"country": "HR", "example": "Pawshake", "url": "https://pawshake.hr"},
+    {"country": "DE", "example": "Rover", "url": "https://rover.de"},
+]
+
+
+def _ready(db_session, gap):
+    """Everything spec A10 asks for, so each test can remove exactly one condition."""
+    _presence(db_session, gap)
+    _proven_model(db_session, gap, CITED)
+    _payment_path(db_session, gap.id)
+
+
+def _verdict(gap_id, decision="proceed", **over):
+    base = dict(
+        gap_id=gap_id,
+        strongest_objection="o",
+        kosovo_killer="k",
+        risk_penalty=3,
+        confidence=0.8,
+        decision=decision,
+        field_check_question="Ask a vet?" if decision == "needs_field_check" else "",
+    )
+    base.update(over)
+    return S.CriticVerdict(**base)
+
+
+def _apply(db_session, gap, *, verdicts, run_id=8, **assessment):
     st = _strategist(db_session, [])
-    out = S.StrategistOutput(
-        assessments=[_assessment(seeded.id, confidence=0.8)], new_gaps=[], headline="h"
-    )
-    crit = S.CriticOutput(
-        verdicts=[
-            S.CriticVerdict(
-                gap_id=seeded.id,
-                strongest_objection="o",
-                kosovo_killer="k",
-                risk_penalty=3,
-                confidence=0.8,
-                decision="proceed",
-                field_check_question="",
-            )
-        ]
-    )
-    st.apply(out, crit, now=NOW, run_id=8)
+    a = _assessment(gap.id, **({"confidence": 0.8} | assessment))
+    out = S.StrategistOutput(assessments=[a], new_gaps=[], headline="h")
+    return st.apply(out, S.CriticOutput(verdicts=verdicts), now=NOW, run_id=run_id)
+
+
+def test_apply_verifies_when_every_a10_condition_holds(db_session, seeded):
+    _ready(db_session, seeded)
+    result = _apply(db_session, seeded, verdicts=[_verdict(seeded.id)])
     gap = repo.get_gap(db_session, seeded.id)
     assert (
         gap.status == "verified" and gap.score_components["absence"] == 25 and gap.confidence == 0.8
     )
+    assert result.field_checks_added == 0
+
+
+def _no_check(db_session, gap):
+    from scout.db.models import Fact
+
+    db_session.query(Fact).filter(Fact.entity_type == "presence_check").delete()
+    db_session.commit()
+
+
+def _old_check(db_session, gap):
+    _no_check(db_session, gap)
+    _presence(db_session, gap, observed_at=NOW - timedelta(days=31))
+
+
+def _unknown_check(db_session, gap):
+    _no_check(db_session, gap)
+    _presence(db_session, gap, verdict="unknown")
+
+
+def _one_citation(db_session, gap):
+    from scout.db.models import ProvenModel
+
+    db_session.get(ProvenModel, gap.proven_model_id).markets = CITED[:1]
+    db_session.commit()
+
+
+def _uncited_markets(db_session, gap):
+    from scout.db.models import ProvenModel
+
+    db_session.get(ProvenModel, gap.proven_model_id).markets = [
+        {"country": "HR", "example": "Pawshake"},
+        {"country": "DE", "example": "Rover"},
+    ]
+    db_session.commit()
+
+
+def _no_nearby(db_session, gap):
+    from scout.db.models import ProvenModel
+
+    db_session.get(ProvenModel, gap.proven_model_id).markets = [
+        {"country": "DE", "example": "Rover", "url": "https://rover.de"},
+        {"country": "US", "example": "Wag", "url": "https://wag.com"},
+    ]
+    db_session.commit()
+
+
+def _no_model(db_session, gap):
+    gap.proven_model_id = None
+    db_session.commit()
+
+
+def _no_payment(db_session, gap):
+    from scout.db.models import Fact
+
+    db_session.query(Fact).filter(Fact.entity_type == "payment_path").delete()
+    db_session.commit()
+
+
+def _payment_for_other_gap(db_session, gap):
+    _no_payment(db_session, gap)
+    _payment_path(db_session, gap.id + 100)
+
+
+def _open_field_check(db_session, gap):
+    repo.add_field_check(db_session, gap_id=gap.id, question="q", why="w", due=TODAY)
+
+
+@pytest.mark.parametrize(
+    "breaker",
+    [
+        _no_check,
+        _old_check,
+        _unknown_check,
+        _one_citation,
+        _uncited_markets,
+        _no_nearby,
+        _no_model,
+        _no_payment,
+        _payment_for_other_gap,
+        _open_field_check,
+    ],
+)
+def test_each_missing_a10_condition_blocks_verified(db_session, seeded, breaker):
+    _ready(db_session, seeded)
+    breaker(db_session, seeded)
+    _apply(db_session, seeded, verdicts=[_verdict(seeded.id)])
+    assert repo.get_gap(db_session, seeded.id).status != "verified"
+
+
+def test_no_critic_verdict_blocks_verified(db_session, seeded):
+    _ready(db_session, seeded)
+    _apply(db_session, seeded, verdicts=[])
+    assert repo.get_gap(db_session, seeded.id).status == "verifying"
+
+
+def test_low_confidence_blocks_verified(db_session, seeded):
+    _ready(db_session, seeded)
+    _apply(db_session, seeded, verdicts=[_verdict(seeded.id)], confidence=0.65)
+    assert repo.get_gap(db_session, seeded.id).status == "verifying"
+
+
+def test_score_below_verifying_floor_blocks_verified(db_session, seeded):
+    _ready(db_session, seeded)
+    weak = S.ComponentScores(proof=5, absence=10, demand=5, founder_fit=5, risk_penalty=10)
+    _apply(db_session, seeded, verdicts=[_verdict(seeded.id)], scores=weak)
+    assert repo.get_gap(db_session, seeded.id).status == "candidate"
+
+
+def test_needs_field_check_counts_once_the_founder_answered(db_session, seeded):
+    _ready(db_session, seeded)
+    fc = repo.add_field_check(db_session, gap_id=seeded.id, question="q", why="w", due=TODAY)
+    _apply(db_session, seeded, verdicts=[_verdict(seeded.id, "needs_field_check")])
+    assert repo.get_gap(db_session, seeded.id).status != "verified"  # still open
+    open_now = repo.open_field_checks(db_session)
+    assert fc.id in {c.id for c in open_now} and len(open_now) == 2  # + the critic's question
+    for c in open_now:
+        repo.answer_field_check(db_session, c, answer="yes, 3 vets", answered_at=NOW)
+    result = _apply(db_session, seeded, verdicts=[_verdict(seeded.id, "needs_field_check")])
+    assert repo.get_gap(db_session, seeded.id).status == "verified"
+    assert result.field_checks_added == 0 and repo.open_field_checks(db_session) == []
+
+
+def test_needs_field_check_with_nothing_answered_blocks_verified(db_session, seeded):
+    _ready(db_session, seeded)
+    _apply(db_session, seeded, verdicts=[_verdict(seeded.id, "needs_field_check")])
+    assert repo.get_gap(db_session, seeded.id).status == "verifying"
+
+
+# ---------- Minor 3: verified does not flap ----------
+
+
+def _make_verified(db_session, gap):
+    _ready(db_session, gap)
+    _apply(db_session, gap, verdicts=[_verdict(gap.id)], run_id=8)
+    assert repo.get_gap(db_session, gap.id).status == "verified"
+
+
+def test_verified_stays_verified_without_new_evidence(db_session, seeded):
+    _make_verified(db_session, seeded)
+    _apply(db_session, seeded, verdicts=[], run_id=9, recommended_status="verifying")
+    assert repo.get_gap(db_session, seeded.id).status == "verified"
+
+
+@pytest.mark.parametrize("decision", ["park", "kill"])
+def test_verified_demoted_by_critic_park_or_kill(db_session, seeded, decision):
+    _make_verified(db_session, seeded)
+    _apply(db_session, seeded, verdicts=[_verdict(seeded.id, decision)], run_id=9)
+    assert repo.get_gap(db_session, seeded.id).status == "parked"
+
+
+def test_verified_demoted_when_check_expires(db_session, seeded):
+    _make_verified(db_session, seeded)
+    st = _strategist(db_session, [])
+    out = S.StrategistOutput(assessments=[_assessment(seeded.id)], new_gaps=[], headline="h")
+    st.apply(out, S.CriticOutput(verdicts=[]), now=NOW + timedelta(days=31), run_id=9)
+    assert repo.get_gap(db_session, seeded.id).status == "verifying"
+
+
+def test_verified_demoted_when_confidence_drops(db_session, seeded):
+    _make_verified(db_session, seeded)
+    _apply(db_session, seeded, verdicts=[], run_id=9, confidence=0.6)
+    assert repo.get_gap(db_session, seeded.id).status == "verifying"
 
 
 def test_critic_kill_parks_with_flag_and_hard_filter_kills(db_session, seeded):
@@ -295,3 +507,29 @@ def test_degraded_presence_check_keeps_the_no_check_caps(db_session, seeded):
     st.apply(out, S.CriticOutput(verdicts=[]), now=NOW, run_id=8)
     gap = repo.get_gap(db_session, seeded.id)
     assert gap.score_components["absence"] == 12 and gap.confidence == 0.5
+
+
+# ---------- Minor 6: the Critic sees the top three by the rubric-capped total ----------
+
+
+def test_critique_ranks_by_rubric_capped_total(db_session, seeded):
+    g2, _ = repo.propose_gap(db_session, title="Dog walking app", sector_slug="pets")
+    _presence(db_session, g2)  # g2 has a check: its absence of 20 counts in full
+    # raw sums: seeded 70 > g2 65; rubric totals: seeded 25+12(no check)+10+10+15 = 72 < g2 80
+    a1 = _assessment(
+        seeded.id,
+        scores=S.ComponentScores(proof=25, absence=25, demand=10, founder_fit=10, risk_penalty=0),
+    )
+    a2 = _assessment(
+        g2.id,
+        scores=S.ComponentScores(proof=25, absence=20, demand=10, founder_fit=10, risk_penalty=0),
+    )
+    out = S.StrategistOutput(assessments=[a1, a2], new_gaps=[], headline="h")
+    client = FakeClient(
+        [FakeMessage(content=[text_block("{}")], parsed_output=S.CriticOutput(verdicts=[]))]
+    )
+    st = Strategist(LLM(client, FakeGuard(), Decimal("0.92")), db_session)
+    inputs = st.collect_inputs(since=NOW - timedelta(hours=1), now=NOW)
+    st.critique(out, inputs, TODAY, top_n=1)
+    sent = json.loads(client.messages.calls[0]["messages"][0]["content"])
+    assert [a["gap_id"] for a in sent["assessments"]] == [g2.id]
