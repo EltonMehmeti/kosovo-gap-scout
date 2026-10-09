@@ -10,7 +10,9 @@ import httpx
 from scout.sources.askdata import USER_AGENT
 from scout.sources.types import AppHit, ChartEntry
 
-TOP_FREE_URL = "https://play.google.com/store/apps/collection/topselling_free"
+# The legacy collection/topselling_free page no longer lists app links (checked 2026-10-09).
+# The "Top charts" page server-renders the top-free list first, in rank order.
+TOP_FREE_URL = "https://play.google.com/store/apps/top"
 APP_ID_RE = re.compile(r"/store/apps/details\?id=([\w.]+)")
 DETAILS_URL = "https://play.google.com/store/apps/details?id={app_id}"
 BROWSER_UA = (
