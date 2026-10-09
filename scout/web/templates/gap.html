@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ gap.title }}{% endblock %}
+{% block content %}
+<p><a href="/gaps">← Gaps</a></p>
+<h1>{{ gap.title }}</h1>
+<p class="muted">
+  {{ sector.name_en if sector else '' }} · <strong>{{ gap.status }}</strong>
+  · score {{ gap.score_total }} · conf {{ '%.2f'|format(gap.confidence) }} · presence {{ gap.presence_level }}
+  {% if gap.critic_flag %}· <span class="badge">{{ gap.critic_flag }}</span>{% endif %}
+  {% if is_finalist %}· <span class="badge">★ Finalist</span>{% endif %}
+</p>
+{% set g = gap %}{% set next = '/gaps/' ~ gap.id %}
+{% set finalists = [gap.id] if is_finalist else [] %}{% set flagged = [gap.id] if is_flagged else [] %}
+{% include "_gap_actions.html" %}
+<h2>Hypothesis</h2><div class="card md">{{ gap.hypothesis_md | md }}</div>
+<h2>Why not yet</h2><div class="card md">{{ gap.why_not_yet_md | md }}</div>
+<h2>Test plan</h2><div class="card md">{{ gap.test_plan_md | md }}</div>
+{% if gap.score_components %}
+<h2>Score</h2>
+<table>{% for k, v in gap.score_components.items() %}<tr><th>{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}</table>
+{% endif %}
+{% if model %}
+<h2>Proven model</h2>
+<div class="card"><strong>{{ model.name }}</strong> — {{ model.description }}
+  <div class="muted">markets: {{ model.markets | join(', ') }}</div>
+  {% for u in model.source_urls if u is string %}{% set t = u | trim %}<div>{% if (t | lower).startswith('http://') or (t | lower).startswith('https://') %}<a href="{{ t }}" rel="noopener noreferrer" target="_blank">{{ t }}</a>{% else %}{{ u }}{% endif %}</div>{% endfor %}
+</div>
+{% endif %}
+<h2>Field checks</h2>
+{% for fc in checks %}<div class="card">{{ fc.question }} — <em>{{ fc.status }}</em>{% if fc.answer %}: {{ fc.answer }}{% endif %}</div>
+{% else %}<p class="muted">None.</p>{% endfor %}
+<h2>Recent assessments</h2>
+{% for a in assessments %}
+  <details class="card"><summary>{{ a.created_at.strftime('%Y-%m-%d') }} · {{ a.model }} · score {{ a.score_total }} · conf {{ '%.2f'|format(a.confidence) }}</summary>
+    <pre style="white-space:pre-wrap">{{ a.critic | tojson(indent=2) if a.critic else '' }}</pre>
+  </details>
+{% else %}<p class="muted">None yet.</p>{% endfor %}
+{% endblock %}

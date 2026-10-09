@@ -74,3 +74,17 @@ Each was judged non-blocking for the first live runs. Pick these up when plannin
   - `rubric.py` uses a file-level `# ruff: noqa: E501`;
   - a NaN confidence clamps to 1.0;
   - money rounding uses `ROUND_HALF_EVEN`.
+
+## Dashboard (M2 B11) — parked review findings
+
+- Out-of-int32 ids and NUL bytes now return 400 (global `DataError` handler); tests do not follow
+  error redirects to assert the flash text, and bad-input cases (unknown sector, priority 101) are thin.
+- `?msg=` / `?err=` render any (escaped) text — a crafted link can show misleading text on the real
+  dashboard. Fix: message codes.
+- Founder journal entries can crowd the scout's own run journals out of `latest_journal(limit=3)` /
+  the 6000-char memory window.
+- `culture:<theme>` digest keys are only prefix-checked; a key with `/`, `?`, `#` gives a broken link.
+- A missing `ANTHROPIC_API_KEY` raises before a `runs` row exists, so the Pipeline page shows nothing.
+- Knowledge search: an all-short-words query shows unfiltered facts; `ilike` `%`/`_` unescaped.
+- Founder actions use separate commits (status, then settings lists, then journal); not atomic.
+- `strategist.py` imports `scout.founder` (move `founder_parked` to `repo` if a cycle ever appears).

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% set hide_nav = True %}
+{% block title %}Log in{% endblock %}
+{% block content %}
+<h1>Kosovo Gap Scout</h1>
+<form method="post" action="/login" class="card">
+  <label for="token">Dashboard token</label><br>
+  <input id="token" name="token" type="password" autocomplete="current-password" required autofocus>
+  <button class="primary">Log in</button>
+</form>
+{% endblock %}

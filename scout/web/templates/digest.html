@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ digest.title }}{% endblock %}
+{% block content %}
+<p><a href="/knowledge">← Knowledge</a></p>
+<h1>{{ digest.title }}</h1>
+<p class="muted">{{ digest.key }} · updated {{ digest.updated_at.strftime('%Y-%m-%d %H:%M') }} · ~{{ digest.token_estimate }} tokens</p>
+<div class="card md">{{ digest.body_md | md }}</div>
+<h2>Edit</h2>
+<form method="post" action="/knowledge/digests/{{ digest.key }}">
+  <textarea name="body_md" style="min-height:20em">{{ digest.body_md }}</textarea>
+  <button class="primary">Save</button>
+  <span class="muted">The scout reads this digest in every task on this sector; your edit is journaled.</span>
+</form>
+{% endblock %}

@@ -20,6 +20,7 @@ from scout.db.base import make_engine, make_session_factory
 from scout.director.planner import CHART_DIFF_EST, PHASE_RULES, _key, load_state, plan_tasks
 from scout.editor.brief import write_brief
 from scout.extract.extractor import Extractor
+from scout.founder import effective_cap
 from scout.llm.gateway import LLM, LLMError
 from scout.sources import apple, play
 from scout.sources.askdata import AskDataClient
@@ -154,6 +155,8 @@ def run_once(
     clock=None,
     worker_id: str = "director",
 ) -> RunSummary:
+    if not settings.anthropic_api_key and client is None:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set; the scout cannot run without it")
     clock = clock or (
         lambda: datetime.now(UTC)
     )  # the only wall-clock read; tests inject a fixed one
@@ -178,7 +181,7 @@ def run_once(
         cap = (
             Decimal(budget_override)
             if budget_override is not None
-            else min(PHASE_RULES[phase]["cap"], Decimal(settings.daily_budget_eur))
+            else effective_cap(session, settings, phase, today)
         )
         run = repo.start_run(session, day=today, phase=phase, budget_cap_eur=cap, started_at=now)
         run_id = run.id

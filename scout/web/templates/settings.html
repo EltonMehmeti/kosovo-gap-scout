@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<h2>Phase</h2>
+<form class="card row" method="post" action="/settings/phase">
+  <select name="phase">{% for p in phases %}<option value="{{ p }}" {{ 'selected' if p == phase else '' }}>{{ p }}</option>{% endfor %}</select>
+  <button class="primary">Save</button>
+  <span class="muted">current: {{ phase }}</span>
+</form>
+<h2>Finalists</h2>
+{% for g in finalist_gaps %}
+  <div class="card row"><a href="/gaps/{{ g.id }}">{{ g.title }}</a> <span class="muted">{{ g.status }} · {{ g.score_total }}</span>
+    <form class="inline" method="post" action="/gaps/{{ g.id }}/finalist"><input type="hidden" name="next" value="/settings"><button>Remove</button></form></div>
+{% else %}<p class="muted">None chosen yet. Use “Finalist” on the Gaps page.</p>{% endfor %}
+<h2>Verify requests</h2>
+{% for g in flagged_gaps %}
+  <div class="card row"><a href="/gaps/{{ g.id }}">{{ g.title }}</a>
+    <form class="inline" method="post" action="/gaps/{{ g.id }}/flag"><input type="hidden" name="next" value="/settings"><input type="hidden" name="unflag" value="1"><button>Withdraw</button></form></div>
+{% else %}<p class="muted">None.</p>{% endfor %}
+<h2>Sector priorities</h2>
+<table>
+  {% for s in sectors %}
+  <tr><td>{{ s.name_en }}</td><td>
+    <form class="inline" method="post" action="/settings/sector-priority">
+      <input type="hidden" name="slug" value="{{ s.slug }}">
+      <input name="priority" value="{{ s.priority }}" size="3" inputmode="numeric" aria-label="priority for {{ s.name_en }}">
+      <button>Save</button>
+    </form></td></tr>
+  {% endfor %}
+</table>
+<h2>Environment (set on Render)</h2>
+<table>{% for k, v in env.items() %}<tr><th>{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}</table>
+{% endblock %}

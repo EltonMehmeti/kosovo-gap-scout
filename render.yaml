@@ -3,6 +3,7 @@ services:
     name: scout-daily
     runtime: python
     plan: starter
+    region: frankfurt
     schedule: "0 6 * * *"          # 06:00 UTC = 07:00 Kosovo in winter (CET), 08:00 in summer (CEST); brief ready before work
     buildCommand: pip install uv && uv sync --frozen --no-dev
     startCommand: uv run scout run
@@ -17,15 +18,36 @@ services:
         sync: false
       - key: APIFY_TOKEN
         sync: false
+      - key: SCOUT_RUN_MAX_MINUTES
+        value: "50"
+      - key: SCOUT_DIRECTOR_REVIEW
+        value: "true"
+      - fromGroup: scout-shared
+  - type: web
+    name: scout-dashboard
+    runtime: python
+    plan: free                     # sleeps after 15 min idle; first load ~30–60 s. Upgrade to starter to keep it warm.
+    region: frankfurt
+    buildCommand: pip install uv && uv sync --frozen --no-dev
+    startCommand: uv run uvicorn scout.web.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: DATABASE_URL
+        sync: false
+      - key: DASHBOARD_TOKEN       # long random string; you type it once per browser
+        sync: false
+      - fromGroup: scout-shared
+
+envVarGroups:
+  - name: scout-shared
+    envVars:
       - key: SCOUT_PHASE
         value: foundation
       # Phase 0 (hand runs, until 2026-10-18) is planned at about €1/day. Raise this to "3.00" on
       # 2026-10-19, when Foundation (Phase 1) starts.
       - key: SCOUT_DAILY_BUDGET_EUR
         value: "1.00"
-      - key: SCOUT_RUN_MAX_MINUTES
-        value: "50"
       - key: SCOUT_TIMEZONE
         value: Europe/Belgrade
-      - key: SCOUT_DIRECTOR_REVIEW
-        value: "true"

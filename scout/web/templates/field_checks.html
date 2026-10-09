@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Field checks{% endblock %}
+{% block content %}
+<h1>Field checks</h1>
+<p class="muted">Answer from what you know or one phone call (≤ 3 minutes each).</p>
+{% for fc in open_checks %}
+  <form class="card" method="post" action="/field-checks/{{ fc.id }}/answer">
+    <div><strong>{{ fc.question }}</strong></div>
+    <div class="muted">
+      {% if fc.gap_id and fc.gap_id in gaps %}<a href="/gaps/{{ fc.gap_id }}">{{ gaps[fc.gap_id].title }}</a> · {% endif %}
+      {% if fc.due %}due {{ fc.due }} · {% endif %}{{ fc.why }}
+    </div>
+    <textarea name="answer" required></textarea>
+    <button class="primary">Answer</button>
+  </form>
+{% else %}
+  <div class="card">No open field checks.</div>
+{% endfor %}
+{% if answered %}
+<h2>Recently answered</h2>
+{% for fc in answered %}
+  <div class="card"><div>{{ fc.question }}</div><div class="muted">{{ fc.answer or fc.status }}</div></div>
+{% endfor %}
+{% endif %}
+{% endblock %}

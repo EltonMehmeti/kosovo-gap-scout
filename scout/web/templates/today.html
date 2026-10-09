@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Today{% endblock %}
+{% block content %}
+<p class="muted">
+  Last run: {% if last %}{{ last.day }} · {{ last.status }}{% else %}none yet{% endif %}
+  · spent today €{{ spent_today }} · month €{{ spent_month }}
+  · <a href="/pipeline">{{ queued }} queued</a>
+  · <a href="/field-checks">{{ open_checks }} field check{{ '' if open_checks == 1 else 's' }}</a>
+  · <a href="/gaps">gaps →</a>
+</p>
+{% if brief %}
+  <div class="row">
+    <span class="muted">Brief for {{ brief.day }}</span>
+    {% if unread %}
+      <span class="badge new-brief">New</span>
+      <form class="inline" method="post" action="/brief/{{ brief.id }}/read"><button>Mark read</button></form>
+    {% endif %}
+  </div>
+  <article class="card md">{{ brief.markdown | md }}</article>
+{% else %}
+  <div class="card">No brief yet. The first one appears after the next run.</div>
+{% endif %}
+{% endblock %}
