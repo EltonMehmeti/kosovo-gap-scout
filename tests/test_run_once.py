@@ -609,3 +609,24 @@ def test_strategist_skipped_when_fresh_facts_touch_no_sector(world, settings):
         settings, **_kw(world, now=later, clock=lambda: later, client=client, runner_factory=boom)
     )
     assert not [c for c in client.messages.calls if "output_format" in c]
+
+
+@pytest.mark.parametrize("cut", [None, "budget_stopped", "truncated"])
+def test_completed_verify_gap_clears_the_founder_flag(world, settings, cut):
+    gid = world["gap"].id
+    with world["factory"]() as s:
+        repo.set_setting(s, "flagged_gaps", [gid, 999])
+        task = repo.enqueue_task(s, profile="verify-gap", payload={"gap_id": gid}, priority=90)
+        outcome = TaskOutcome(
+            "checked",
+            "end_turn",
+            3,
+            Decimal("0.2"),
+            0,
+            5,
+            cut == "truncated",
+            cut == "budget_stopped",
+        )
+        R._apply_outcome(s, task, outcome, today=MONDAY, now=NOW)
+        flags = repo.get_setting(s, "flagged_gaps")
+    assert flags == ([999] if cut is None else [gid, 999])

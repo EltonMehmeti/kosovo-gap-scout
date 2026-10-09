@@ -567,6 +567,13 @@ def _apply_outcome(session, task, outcome, *, today, now) -> None:
     if complete and task.profile == "deep-dive" and payload.get("gap_id"):
         repo.set_gap_test_plan(session, int(payload["gap_id"]), outcome.summary_md)
         repo.set_setting(session, f"deep-dive-done:{today.replace(day=1).isoformat()}", True)
+    if complete and task.profile == "verify-gap" and payload.get("gap_id"):
+        # a founder flag is a one-shot "verify this" (spec A5): done once the verify-gap completes
+        flagged = list(repo.get_setting(session, "flagged_gaps", []) or [])
+        if int(payload["gap_id"]) in flagged:
+            repo.set_setting(
+                session, "flagged_gaps", [g for g in flagged if g != int(payload["gap_id"])]
+            )
     if task.profile == "verify-gap" and payload.get("gap_id"):
         for line in outcome.summary_md.splitlines():
             if line.lower().startswith("field-check:") and len(repo.open_field_checks(session)) < 5:

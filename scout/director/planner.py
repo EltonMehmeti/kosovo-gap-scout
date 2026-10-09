@@ -33,6 +33,9 @@ PHASE_RULES: dict[str, dict] = {
         "culture": 0,
     },
 }
+# A founder flag means "verify this" once (spec A5): one flagged verify-gap per day gets priority outside the
+# phase quota; it is unflagged when that verify-gap completes (run._apply_outcome).
+MAX_FLAGGED_VERIFY_PER_DAY = 1
 MAP_STALE_DAYS = 14
 HUNT_STALE_DAYS = 21
 CHART_DIFF_EST = Decimal("0.05")
@@ -140,15 +143,17 @@ def plan_tasks(state: PlannerState, phase: str) -> list[PlannedTask]:
 
     # verify-gap
     n_verify = rules["verify-gap"]
+    flagged_slots = MAX_FLAGGED_VERIFY_PER_DAY
     for g in _verify_candidates(state):
-        is_flagged = g.id in state.flagged_gap_ids
-        if phase == "maintenance" and not is_flagged:
+        before = len(wanted)
+        if g.id in state.flagged_gap_ids and flagged_slots > 0:
+            add("verify-gap", _gap_payload(g), 90)
+            flagged_slots -= len(wanted) - before
             continue
-        if not is_flagged and n_verify <= 0:
+        if phase == "maintenance" or n_verify <= 0:
             continue
-        add("verify-gap", _gap_payload(g), 90 if is_flagged else None)
-        if not is_flagged:
-            n_verify -= 1
+        add("verify-gap", _gap_payload(g))
+        n_verify -= len(wanted) - before
     # map-sector: unmapped by priority, then stale
     unmapped = sorted(
         (s for s in state.sectors if s.status == "unmapped"), key=lambda s: (s.priority, s.slug)

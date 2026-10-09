@@ -122,3 +122,19 @@ def test_dedupe_keeps_two_gaps_in_same_sector():
     ]
     tasks = P.plan_tasks(_state(gaps=gaps), "verification")
     assert {t.payload["gap_id"] for t in tasks if t.profile == "verify-gap"} == {1, 4}
+
+
+def test_flagged_gaps_get_one_priority_verify_per_day_so_maintenance_keeps_its_news_scan():
+    gaps = [P.GapInfo(i, f"G{i}", "pets", 50, 0.5, "verifying", True) for i in (4, 5, 6)]
+    tasks = P.plan_tasks(_state(gaps=gaps, flagged_gap_ids=[4, 5, 6]), "maintenance")
+    verify = [t for t in tasks if t.profile == "verify-gap"]
+    assert len(verify) == 1 and verify[0].priority == 90 and verify[0].payload["gap_id"] == 4
+    assert "news-scan" in _profiles(tasks)
+    assert sum(t.est_cost_eur for t in tasks) <= P.PHASE_RULES["maintenance"]["cap"]
+
+
+def test_extra_flagged_gaps_use_the_regular_verify_slots_outside_maintenance():
+    gaps = [P.GapInfo(i, f"G{i}", "pets", 50, 0.5, "verifying", True) for i in (4, 5, 6)]
+    tasks = P.plan_tasks(_state(gaps=gaps, flagged_gap_ids=[4, 5, 6]), "verification")
+    verify = [(t.payload["gap_id"], t.priority) for t in tasks if t.profile == "verify-gap"]
+    assert verify[0] == (4, 90) and len(verify) == 3  # 1 flagged slot + 2 regular slots

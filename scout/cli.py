@@ -206,7 +206,8 @@ def chart_diff_cmd() -> None:
 
 @app.command("flag-gap")
 def flag_gap(gap_id: int, unflag: bool = typer.Option(False, "--unflag")) -> None:
-    """Mark a gap as founder-flagged: it is verified first and in maintenance phase."""
+    """Ask for one re-verification of a gap ("verify this"): one flagged gap per day is verified first, in
+    every phase, and the flag clears when that verify-gap completes. --unflag withdraws the request."""
     with session_factory(get_settings())() as s:
         if repo.get_gap(s, gap_id) is None:
             raise typer.BadParameter(f"unknown gap {gap_id}")
