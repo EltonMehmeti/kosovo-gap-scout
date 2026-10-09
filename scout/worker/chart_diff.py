@@ -48,7 +48,10 @@ def run_chart_diff(
         charts: dict[str, list] = {}
         for country in CHART_COUNTRIES:
             try:
-                charts[country] = list(fetch(country))
+                seen: dict[str, object] = {}
+                for e in fetch(country):
+                    seen.setdefault(e.app_key, e)  # keep the best rank if a key repeats
+                charts[country] = list(seen.values())
             except Exception as e:  # noqa: BLE001 — one dead storefront must not stop the others
                 report.errors.append(f"{store}/{country}: {type(e).__name__}: {e}")
         for country, entries in charts.items():
@@ -62,6 +65,9 @@ def run_chart_diff(
             )
         if "xk" not in charts:
             continue  # cannot diff without the Kosovo chart
+        if not charts["xk"]:
+            report.errors.append(f"{store}/xk: empty chart")
+            continue  # an empty Kosovo chart would make every neighbour app a lead
         xk_keys = {(store, e.app_key) for e in charts["xk"]}
         candidates: dict[tuple[str, str], Lead] = {}
         for country in NEIGHBOURS:
@@ -71,7 +77,8 @@ def run_chart_diff(
                 lead = candidates.setdefault(
                     (store, e.app_key), Lead(store, e.app_key, e.name, e.publisher)
                 )
-                lead.countries.append(country)
+                if country not in lead.countries:
+                    lead.countries.append(country)
                 lead.best_rank = min(lead.best_rank, e.rank)
         for lead in candidates.values():
             if len(lead.countries) >= min_neighbours and not repo.app_ever_in_chart(

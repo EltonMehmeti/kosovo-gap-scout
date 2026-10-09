@@ -161,3 +161,25 @@ def test_same_app_key_in_both_stores_stays_separate(db_session):
     )
     assert [(lead.store, lead.app_key) for lead in report.leads] == [("play", "42")]
     assert report.leads[0].name == "PlayOnly" and report.leads[0].countries == ["al", "mk"]
+
+
+def test_empty_kosovo_chart_is_an_error_not_a_flood_of_leads(db_session):
+    apple = dict(APPLE)
+    apple["xk"] = []
+    report = CD.run_chart_diff(
+        db_session, TODAY, apple_fetch=_fetch(apple), play_fetch=_fetch(PLAY)
+    )
+    assert "apple/xk: empty chart" in report.errors
+    assert not [lead for lead in report.leads if lead.store == "apple"]
+    assert repo.chart_snapshot(
+        db_session, store="apple", country="al", chart=CD.CHART, captured_on=TODAY
+    )
+
+
+def test_repeated_key_in_one_country_does_not_satisfy_min_neighbours(db_session):
+    apple = {c: [] for c in CD.CHART_COUNTRIES}
+    apple["xk"] = [_e(1, "9", "Known")]
+    apple["al"] = [_e(1, "5", "Dup"), _e(2, "5", "Dup")]
+    report = CD.run_chart_diff(db_session, TODAY, apple_fetch=_fetch(apple), play_fetch=_fetch({}))
+    assert [lead for lead in report.leads if lead.store == "apple"] == []
+    assert report.snapshots_saved == 2
