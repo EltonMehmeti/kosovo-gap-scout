@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from scout.budget.pricing import llm_cost_usd, to_eur, usage_units
+from scout.budget.pricing import MODEL_PRICES_USD_PER_MTOK, llm_cost_usd, to_eur, usage_units
 from scout.db.repo import CostRecord
 
 SystemPrompt = str | list[dict[str, Any]]
@@ -92,6 +92,7 @@ class LLM:
         task_id: int | None = None,
     ) -> LLMResult:
         self.guard.check(est_eur)
+        _ = MODEL_PRICES_USD_PER_MTOK[model]  # unknown model fails before anything is billed
         message = self.client.messages.create(
             model=model,
             max_tokens=max_tokens,
@@ -117,14 +118,35 @@ class LLM:
         task_id: int | None = None,
     ) -> LLMResult:
         self.guard.check(est_eur)
-        message = self.client.messages.parse(
-            model=model,
-            max_tokens=max_tokens,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-            output_format=output_format,
-            output_config={"effort": effort},
-        )
+        _ = MODEL_PRICES_USD_PER_MTOK[model]  # unknown model fails before anything is billed
+        try:
+            message = self.client.messages.parse(
+                model=model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+                output_format=output_format,
+                output_config={"effort": effort},
+            )
+        except (
+            ValueError
+        ) as exc:  # pydantic.ValidationError and JSONDecodeError subclass ValueError
+            # The SDK validated the output itself and discarded the message; tokens were billed.
+            self.guard.record(
+                CostRecord(
+                    "llm",
+                    "anthropic",
+                    model,
+                    {"estimated": 1},
+                    Decimal(est_eur),
+                    request_id=None,
+                    task_id=task_id,
+                )
+            )
+            raise LLMTruncated(
+                f"{model} output failed SDK parsing (likely truncated); cost recorded as "
+                f"estimate {est_eur} EUR: {exc}"
+            ) from exc
         result = self._finish(model, message, task_id)
         if result.parsed is None:
             raise LLMTruncated(

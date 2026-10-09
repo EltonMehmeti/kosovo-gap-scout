@@ -80,3 +80,41 @@ def test_message_text_joins_text_blocks_only():
         est_eur=Decimal("0"),
     )
     assert res.text == "a\nb" and res.cache_read_tokens == 0
+
+
+def test_sdk_parse_failure_records_estimate_and_raises_truncated():
+    from pydantic import TypeAdapter, ValidationError
+
+    try:
+        TypeAdapter(dict).validate_json("{")
+    except ValidationError as exc:
+        err = exc
+    guard = FakeGuard()
+    llm = LLM(FakeClient([err]), guard, Decimal("0.92"))
+    with pytest.raises(LLMTruncated):
+        llm.parse(
+            model="claude-haiku-5-5",
+            output_format=dict,
+            system="s",
+            user="u",
+            est_eur=Decimal("0.01"),
+        )
+    assert len(guard.records) == 1
+    assert guard.records[0].cost_eur == Decimal("0.01")
+
+
+def test_unknown_model_fails_before_any_call():
+    guard = FakeGuard()
+    client = FakeClient([FakeMessage()])
+    llm = LLM(client, guard, Decimal("0.92"))
+    with pytest.raises(KeyError):
+        llm.create_text(model="claude-nope", system="s", user="u", est_eur=Decimal("0.01"))
+    with pytest.raises(KeyError):
+        llm.parse(
+            model="claude-nope",
+            output_format=dict,
+            system="s",
+            user="u",
+            est_eur=Decimal("0.01"),
+        )
+    assert client.messages.calls == [] and guard.records == []

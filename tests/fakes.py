@@ -43,13 +43,19 @@ class FakeMessages:
         self._responses = list(responses)
         self.calls: list[dict] = []
 
+    def _next(self):
+        item = self._responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
     def create(self, **kwargs):
         self.calls.append(kwargs)
-        return self._responses.pop(0)
+        return self._next()
 
     def parse(self, **kwargs):
         self.calls.append(kwargs)
-        return self._responses.pop(0)
+        return self._next()
 
 
 class FakeClient:
