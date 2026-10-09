@@ -721,3 +721,37 @@ def answer_field_check(
     fc.status = "answered"
     fc.answered_at = answered_at
     session.commit()
+
+
+def set_gap_test_plan(session: Session, gap_id: int, md: str) -> None:
+    gap = session.get(Gap, gap_id)
+    if gap is not None:
+        gap.test_plan_md = md
+        session.commit()
+
+
+def runs_on_day(session: Session, day: date) -> list[Run]:
+    return list(session.scalars(select(Run).where(Run.day == day).order_by(Run.id)))
+
+
+def release_stale_tasks(session: Session, *, claimed_before: datetime) -> int:
+    """Put tasks stuck in 'running' (claimed before the cutoff) back in the queue."""
+    stale = list(
+        session.scalars(
+            select(Task).where(Task.status == "running", Task.started_at < claimed_before)
+        )
+    )
+    for t in stale:
+        t.status = "queued"
+        t.locked_by = None
+    session.commit()
+    return len(stale)
+
+
+def release_task(session: Session, task: Task, *, give_back_attempt: bool = False) -> None:
+    """Return a claimed, unfinished task to the queue (optionally undoing the claim's attempt)."""
+    task.status = "queued"
+    task.locked_by = None
+    if give_back_attempt and task.attempts > 0:
+        task.attempts -= 1
+    session.commit()
