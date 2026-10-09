@@ -57,7 +57,7 @@ def test_worker_runs_to_end_turn_and_records_each_message():
     assert (
         kw["model"] == "claude-sonnet-5-5" and kw["system"] is SYSTEM and kw["max_iterations"] == 14
     )
-    assert kw["output_config"] == {"effort": "medium"} and kw["max_tokens"] == 4096
+    assert kw["output_config"] == {"effort": "medium"} and kw["max_tokens"] == 16000
     assert "thinking" not in kw and "tool_choice" not in kw
     names = [t.name for t in kw["tools"] if hasattr(t, "name")]
     assert names[0] == "kb_search" and len(names) == 11

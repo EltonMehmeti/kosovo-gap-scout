@@ -114,3 +114,13 @@ def test_verify_gap_brief_pins_the_keys_the_verified_gate_reads():
     )
     assert 'payment_path fact with entity_key "gap:12"' in brief
     assert brief.count('"gap:12"') == 2  # presence_check and payment_path both keyed to the gap
+
+
+def test_research_turns_have_room_to_think_search_and_save():
+    # Live run 2026-10-09: at 4096 every map-sector turn hit max_tokens right after "Saving now.",
+    # so nothing was written. One turn carries adaptive thinking, search results and a large save call.
+    from scout.worker.profiles import PROFILES
+
+    for name in ("map-sector", "hunt-models", "verify-gap", "culture", "deep-dive"):
+        assert PROFILES[name].max_tokens >= 16000, name
+    assert PROFILES["news-scan"].max_tokens >= 8000

@@ -216,6 +216,8 @@ class Profile:
     brief_template: str
 
 
+# max_tokens is a ceiling, not a cost (billing is per token used): one research turn carries adaptive
+# thinking, search results and a large save call, and 4096 cut every map-sector save off live (2026-10-09).
 PROFILES: dict[str, Profile] = {
     "map-sector": Profile(
         "map-sector",
@@ -224,7 +226,7 @@ PROFILES: dict[str, Profile] = {
         14,
         12,
         8,
-        4096,
+        16000,
         "medium",
         MAP_SECTOR_BRIEF,
     ),
@@ -235,7 +237,7 @@ PROFILES: dict[str, Profile] = {
         14,
         12,
         8,
-        4096,
+        16000,
         "medium",
         HUNT_MODELS_BRIEF,
     ),
@@ -246,18 +248,18 @@ PROFILES: dict[str, Profile] = {
         14,
         10,
         6,
-        4096,
+        16000,
         "medium",
         VERIFY_GAP_BRIEF,
     ),
     "culture": Profile(
-        "culture", "claude-sonnet-5-5", Decimal("0.30"), 12, 10, 8, 4096, "medium", CULTURE_BRIEF
+        "culture", "claude-sonnet-5-5", Decimal("0.30"), 12, 10, 8, 16000, "medium", CULTURE_BRIEF
     ),
     "news-scan": Profile(
-        "news-scan", "claude-sonnet-5-5", Decimal("0.10"), 6, 4, 4, 2048, "medium", NEWS_SCAN_BRIEF
+        "news-scan", "claude-sonnet-5-5", Decimal("0.10"), 6, 4, 4, 8000, "medium", NEWS_SCAN_BRIEF
     ),
     "deep-dive": Profile(
-        "deep-dive", "claude-opus-5-5", Decimal("0.80"), 10, 8, 6, 8192, "high", DEEP_DIVE_BRIEF
+        "deep-dive", "claude-opus-5-5", Decimal("0.80"), 10, 8, 6, 16000, "high", DEEP_DIVE_BRIEF
     ),
 }
 
