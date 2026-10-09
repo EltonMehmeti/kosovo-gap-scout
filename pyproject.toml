@@ -32,7 +32,7 @@ packages = ["scout"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = ["docs"]
+extend-exclude = ["docs", "alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
