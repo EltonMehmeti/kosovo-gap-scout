@@ -1,13 +1,28 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}Journal{% endblock %}
 {% block content %}
-<h1>Journal</h1>
-{% for e in entries %}
-  <div class="card">
-    <div class="muted">{{ e.day }} · {% if e.run_id %}Run #{{ e.run_id }}{% else %}Founder{% endif %}</div>
-    {% if e.did_md %}<div class="md"><strong>Did</strong>{{ e.did_md | md }}</div>{% endif %}
-    {% if e.learned_md %}<div class="md"><strong>Learned</strong>{{ e.learned_md | md }}</div>{% endif %}
-    {% if e.tomorrow_md %}<div class="md"><strong>Tomorrow</strong>{{ e.tomorrow_md | md }}</div>{% endif %}
-  </div>
-{% else %}<div class="card">Nothing yet.</div>{% endfor %}
+{{ ui.page_header("Journal", "A diary of what the scout did and learned each day, plus the changes you made.") }}
+{% if entries %}
+<ol class="timeline">
+  {% for e in entries %}
+  <li><span class="tl-dot"></span>
+    <div class="tl-head">
+      {{ ui.date(e.day) }}
+      {% if e.run_id %}{{ ui.chip("Scout · run #" ~ e.run_id, "indigo", "Written by the scout after a run") }}
+      {% else %}{{ ui.chip("You", "green", "Changes you made in the dashboard or the command line") }}{% endif %}
+    </div>
+    <div class="card">
+      {% if e.did_md %}<h3>What happened</h3><div class="md prose">{{ e.did_md | md }}</div>{% endif %}
+      {% if e.learned_md %}<h3>Learned</h3><div class="md prose">{{ e.learned_md | md }}</div>{% endif %}
+      {% if e.tomorrow_md %}<h3>Next</h3><div class="md prose">{{ e.tomorrow_md | md }}</div>{% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<div class="card">
+  {{ ui.empty_state("book-open", "Nothing in the journal yet — the scout writes an entry after every run, and your changes appear here too.") }}
+</div>
+{% endif %}
 {% endblock %}

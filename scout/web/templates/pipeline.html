@@ -1,53 +1,110 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}Pipeline{% endblock %}
 {% block content %}
-<h1>Pipeline</h1>
+{% macro what(t) -%}
+<strong>{{ profile_label(t.profile) }}</strong>{% set target = task_target(t.payload) %}{% if target %} · {{ target }}{% endif %}
+{%- endmacro %}
+{{ ui.page_header("Pipeline", "What the scout is doing: failures to retry, tasks waiting for the next run, and past runs.") }}
 
-<h2>Add a task</h2>
+<div class="strip">
+  <div class="stat" data-stat="waiting">{{ ui.icon("clock") }}<span><strong>{{ queue | length }}</strong> waiting</span></div>
+  <div class="stat" data-stat="running">{{ ui.icon("activity") }}<span><strong>{{ running | length }}</strong> running</span></div>
+  <div class="stat" data-stat="failed">{{ ui.icon("triangle-alert") }}<span><strong>{{ failed_count }}</strong> failed</span></div>
+</div>
+
+{% if failed %}
+<section class="card">
+  <h2>{{ ui.icon("triangle-alert") }} Failed — retry or leave them</h2>
+  <ul class="list">
+    {% for t in failed %}
+    <li>
+      <span class="id">#{{ t.id }}</span>
+      <span class="grow">{{ what(t) }} <span class="muted">· tried {{ t.attempts }}× · {{ ui.date(t.finished_at or t.created_at) }}</span></span>
+      {{ ui.post_button("/tasks/%d/retry" | format(t.id), "Retry", cls="sm", icon_name="refresh-cw") }}
+      {% if t.error %}<details><summary class="muted">Show error</summary><pre>{{ t.error }}</pre></details>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>{{ ui.icon("clock") }} Waiting for the next run</h2>
+  {% if queue %}
+  <ul class="list">
+    {% for t in queue %}
+    <li>
+      <span class="id">#{{ t.id }}</span>
+      <span class="grow">{{ what(t) }}</span>
+      <span class="muted">priority {{ t.priority }} · about {{ t.est_cost_eur | eur }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  {{ ui.empty_state("clock", "Nothing waiting. The scout plans its own tasks at the start of each daily run; add one below to push something first.") }}
+  {% endif %}
+</section>
+
+{% if running %}
+<section class="card">
+  <h2>{{ ui.icon("activity") }} Running now</h2>
+  <ul class="list">
+    {% for t in running %}
+    <li><span class="id">#{{ t.id }}</span><span class="grow">{{ what(t) }}</span>{{ ui.status_chip("task", t.status) }}<span class="muted">started {{ ui.date(t.started_at) }}</span></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
 <form class="card" method="post" action="/tasks">
-  <div class="row">
-    <select name="profile" required>{% for p in profiles %}<option value="{{ p }}">{{ p }}</option>{% endfor %}</select>
-    <select name="sector"><option value="">(no sector)</option>{% for s in sectors %}<option value="{{ s.slug }}">{{ s.name_en }}</option>{% endfor %}</select>
-    <input name="gap_id" inputmode="numeric" placeholder="gap id" size="6">
-    <input name="theme" placeholder="culture theme" size="14">
-    <input name="priority" inputmode="numeric" value="70" size="4" aria-label="priority">
-    <button class="primary">Queue</button>
+  <h2>{{ ui.icon("plus") }} Add a task</h2>
+  <div class="fields">
+    <div class="field"><label for="profile">What</label>
+      <select id="profile" name="profile" required>{% for p in profiles %}<option value="{{ p }}">{{ profile_label(p) }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="sector">Sector</label>
+      <select id="sector" name="sector"><option value="">— none —</option>{% for s in sectors %}<option value="{{ s.slug }}">{{ s.name_en }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="gap_id">Gap id</label>
+      <input id="gap_id" name="gap_id" inputmode="numeric" placeholder="e.g. 12"></div>
+    <div class="field"><label for="theme">Culture theme</label>
+      <input id="theme" name="theme" placeholder="e.g. weddings"></div>
+    <div class="field"><label for="priority">Priority</label>
+      <input id="priority" name="priority" inputmode="numeric" value="70"><small>0–100, higher runs sooner</small></div>
   </div>
-  <div class="muted">map-sector/hunt-models take a sector; verify-gap/deep-dive take a gap id; culture takes a theme.</div>
+  <p class="hint">“Map a sector” and “Find proven models” need a sector; “Check a gap” and “Deep dive” need a gap id; “Culture research” needs a theme.</p>
+  <div class="form-foot"><button class="btn primary">{{ ui.icon("plus") }}<span>Queue task</span></button></div>
 </form>
 
-<h2>Queue ({{ queue|length }})</h2>
-{% for t in queue %}
-  <div class="card">#{{ t.id }} <strong>{{ t.profile }}</strong> · prio {{ t.priority }} · est €{{ t.est_cost_eur }}
-    <div class="muted">{{ t.payload }}</div></div>
-{% else %}<p class="muted">Empty.</p>{% endfor %}
-
-<h2>Last run</h2>
-{% if last %}
-  <div class="card">#{{ last.id }} · {{ last.day }} · {{ last.phase }} · {{ last.status }}
-    · cap €{{ last.budget_cap_eur }} · spent €{{ last.spent_eur }} · done {{ last.tasks_done }} · failed {{ last.tasks_failed }}</div>
-  {% for t in last_tasks %}
-    <details class="card"><summary>#{{ t.id }} {{ t.profile }} · {{ t.status }} · €{{ t.actual_cost_eur }}</summary>
-      {% if t.error %}<pre style="white-space:pre-wrap">{{ t.error }}</pre>{% endif %}
-      <div class="md">{{ t.result_md | md }}</div>
-    </details>
-  {% endfor %}
-{% else %}<p class="muted">No runs yet.</p>{% endif %}
-
-<h2>Failures</h2>
-{% for t in failed %}
-  <div class="card">#{{ t.id }} <strong>{{ t.profile }}</strong> · attempts {{ t.attempts }}
-    <pre style="white-space:pre-wrap">{{ t.error }}</pre>
-    <form class="inline" method="post" action="/tasks/{{ t.id }}/retry"><button>Retry</button></form>
-  </div>
-{% else %}<p class="muted">None.</p>{% endfor %}
-
-<h2>Recent runs</h2>
-<table>
-  <tr><th>#</th><th>day</th><th>phase</th><th>status</th><th>cap</th><th>spent</th><th>done</th><th>failed</th></tr>
-  {% for r in runs %}
-  <tr><td>{{ r.id }}</td><td>{{ r.day }}</td><td>{{ r.phase }}</td><td>{{ r.status }}</td>
-      <td>€{{ r.budget_cap_eur }}</td><td>€{{ r.spent_eur }}</td><td>{{ r.tasks_done }}</td><td>{{ r.tasks_failed }}</td></tr>
-  {% endfor %}
-</table>
+<section class="card">
+  <h2>{{ ui.icon("list-checks") }} Recent runs</h2>
+  {% if runs %}
+  <ol class="timeline">
+    {% for r in runs %}{% set ph = phase_info(r.phase) %}
+    <li><span class="tl-dot"></span>
+      <div class="tl-head"><strong>Run #{{ r.id }}</strong> {{ ui.date(r.day) }} {{ ui.status_chip("run", r.status) }} {{ ui.chip(ph.text, "gray", ph.tip) }}</div>
+      <div class="muted">{{ r.tasks_done }} done · {{ r.tasks_failed }} failed · spent {{ r.spent_eur | eur }} of {{ r.budget_cap_eur | eur }}</div>
+      {% if r.summary_md %}<details><summary class="muted">Summary</summary><div class="md prose">{{ r.summary_md | md }}</div></details>{% endif %}
+      {% if last and r.id == last.id and last_tasks %}
+      <details><summary class="muted">Tasks in this run ({{ last_tasks | length }})</summary>
+        <ul class="list">
+          {% for t in last_tasks %}
+          <li>
+            <span class="id">#{{ t.id }}</span><span class="grow">{{ what(t) }}</span>
+            {{ ui.status_chip("task", t.status) }}<span class="muted">{{ t.actual_cost_eur | eur }}</span>
+            {% if t.error or t.result_md %}<details><summary class="muted">Result</summary>
+              {% if t.error %}<pre>{{ t.error }}</pre>{% endif %}
+              <div class="md prose">{{ t.result_md | md }}</div>
+            </details>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  {{ ui.empty_state("list-checks", "No runs yet — the first one starts by itself (" ~ next_run ~ ").") }}
+  {% endif %}
+</section>
 {% endblock %}
