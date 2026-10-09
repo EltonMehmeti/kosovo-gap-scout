@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ sector.name_en }}{% endblock %}
+{% block content %}
+<p><a href="/knowledge">← Knowledge</a></p>
+<h1>{{ sector.name_en }}</h1>
+<p class="muted">{{ sector.status }} · priority {{ sector.priority }} · presence {{ sector.presence_level or '—' }}</p>
+<h2>Digest {% if digest %}<a class="muted" href="/knowledge/digests/{{ digest.key }}">edit</a>{% endif %}</h2>
+{% if digest %}<div class="card md">{{ digest.body_md | md }}</div>{% else %}<p class="muted">Not mapped yet.</p>{% endif %}
+<h2>Gaps</h2>
+{% for g in gaps %}<div><a href="/gaps/{{ g.id }}">{{ g.title }}</a> <span class="muted">{{ g.status }} · {{ g.score_total }}</span></div>
+{% else %}<p class="muted">None.</p>{% endfor %}
+<h2>Businesses ({{ businesses|length }})</h2>
+{% for b in businesses %}<div class="card"><strong>{{ b.name }}</strong> <span class="muted">{{ b.kind }}{% if b.city %} · {{ b.city }}{% endif %}</span>
+  {% if b.note %}<div>{{ b.note }}</div>{% endif %}</div>
+{% else %}<p class="muted">None.</p>{% endfor %}
+<h2>Proven models ({{ models|length }})</h2>
+{% for m in models %}<div class="card"><strong>{{ m.name }}</strong> — {{ m.description }}
+  <div class="muted">markets: {{ m.markets | join(', ') }} · nearby {{ m.nearby_count }}</div></div>
+{% else %}<p class="muted">None.</p>{% endfor %}
+{% endblock %}
