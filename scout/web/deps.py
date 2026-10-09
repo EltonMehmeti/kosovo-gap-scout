@@ -50,7 +50,11 @@ def page(request: Request, name: str, *, status_code: int = 200, **ctx):
 
 def local_path(url: str) -> str:
     """Only same-site paths may be redirect targets (`next=` fields come from the browser)."""
-    if url.startswith("/") and not url.startswith("//") and "\\" not in url:
+    if (
+        url.startswith("/")
+        and not url.startswith("//")
+        and not any(c in url for c in "\\\t\r\n")  # browsers drop tab/CR/LF: "/\t/x" is "//x"
+    ):
         return url
     return "/"
 

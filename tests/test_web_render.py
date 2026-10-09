@@ -27,7 +27,15 @@ def test_cookie_value_is_stable_and_not_the_token():
 
 def test_local_path_only_allows_same_site_paths():
     assert local_path("/gaps?x=1") == "/gaps?x=1"
-    for bad in ("//evil.com", "https://evil.com", "evil.com", "", "/\\evil.com"):
+    for bad in (
+        "//evil.com",
+        "https://evil.com",
+        "evil.com",
+        "",
+        "/\\evil.com",
+        "/\t/evil.com",
+        "/\n/evil.com",
+    ):
         assert local_path(bad) == "/"
 
 
