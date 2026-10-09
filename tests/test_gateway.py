@@ -118,3 +118,18 @@ def test_unknown_model_fails_before_any_call():
             est_eur=Decimal("0.01"),
         )
     assert client.messages.calls == [] and guard.records == []
+
+
+def test_plain_value_error_from_sdk_propagates_and_records_nothing():
+    guard = FakeGuard()
+    llm = LLM(FakeClient([ValueError("x")]), guard, Decimal("0.92"))
+    with pytest.raises(ValueError, match="x") as ei:
+        llm.parse(
+            model="claude-haiku-5-5",
+            output_format=dict,
+            system="s",
+            user="u",
+            est_eur=Decimal("0.01"),
+        )
+    assert not isinstance(ei.value, LLMTruncated)
+    assert guard.records == []

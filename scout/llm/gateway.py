@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
+
+from pydantic import ValidationError
 
 from scout.budget.pricing import MODEL_PRICES_USD_PER_MTOK, llm_cost_usd, to_eur, usage_units
 from scout.db.repo import CostRecord
@@ -128,9 +131,7 @@ class LLM:
                 output_format=output_format,
                 output_config={"effort": effort},
             )
-        except (
-            ValueError
-        ) as exc:  # pydantic.ValidationError and JSONDecodeError subclass ValueError
+        except (ValidationError, json.JSONDecodeError) as exc:  # post-response parser errors only
             # The SDK validated the output itself and discarded the message; tokens were billed.
             self.guard.record(
                 CostRecord(
