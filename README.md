@@ -35,3 +35,17 @@ Spec: docs/superpowers/specs/2026-10-09-kosovo-gap-scout-design.md
   A phase set with `scout set-phase` is stored in the database and overrides the `SCOUT_PHASE` env var
   (only `scout run --phase` takes precedence over it).
 - Source notes: record here any live deviation found by `tests/test_live.py` (Places region code, Play chart HTML).
+
+## Dashboard (Render web service `scout-dashboard`)
+
+Mobile-first pages: Today, Gaps, Field checks, Pipeline, Knowledge, Journal, Costs and Settings.
+Every button goes through `scout/founder.py` and is journaled, and the CLI uses the same functions.
+
+- Local: `DASHBOARD_TOKEN=dev uv run uvicorn scout.web.main:app --reload`, then open http://127.0.0.1:8000.
+- Render: set `DATABASE_URL` and `DASHBOARD_TOKEN`. Generate the token with
+  `python -c "import secrets; print(secrets.token_urlsafe(32))"`. The dashboard does not need
+  `ANTHROPIC_API_KEY`.
+- Changing `DASHBOARD_TOKEN` logs out every browser.
+- "Verify" queues one re-verification of the gap; it never marks a gap verified by hand (spec A10).
+  "Kill" sticks until you press "Reopen".
+- Today's cap (Costs page or `scout set-cap 1.50`) replaces the phase cap for that Kosovo day only.
