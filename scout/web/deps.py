@@ -6,7 +6,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Iterator
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -98,12 +98,14 @@ def _shell(request: Request, session: Session | None) -> dict:
         phase = (repo.get_setting(s, "phase") or {}).get(
             "value"
         ) or request.app.state.settings.phase
-        return {"nav_badges": nav_badges(s), "nav_phase": phase}
+        tz = request.app.state.settings.timezone
+        next_run = ui.next_run_text(datetime.now(UTC), tz)
+        return {"nav_badges": nav_badges(s), "nav_phase": phase, "nav_next": next_run}
     except Exception:
         log.warning("sidebar badges unavailable", exc_info=True)
         if not own:
             s.rollback()
-        return {"nav_badges": {}, "nav_phase": None}
+        return {"nav_badges": {}, "nav_phase": None, "nav_next": None}
     finally:
         if own:
             s.close()
@@ -119,7 +121,7 @@ def page(
 ):
     base = {"msg": request.query_params.get("msg"), "err": request.query_params.get("err")}
     if name in BARE_PAGES:
-        base |= {"nav_badges": {}, "nav_phase": None}
+        base |= {"nav_badges": {}, "nav_phase": None, "nav_next": None}
     else:
         base |= _shell(request, session)
     return templates.TemplateResponse(request, name, {**base, **ctx}, status_code=status_code)

@@ -20,20 +20,32 @@
 {%- if not hide_nav %}
   {%- set here = active_section(request.url.path) %}
   {%- set badges = nav_badges or {} %}
+  {%- set sec = SECTIONS | selectattr("key", "equalto", here) | first %}
   <aside class="sidebar">
-    <a class="brand" href="/">{{ ui.icon("target") }}<span>Gap Scout</span></a>
+    <a class="brand" href="/"><span class="mark" aria-hidden="true"><span></span></span><span class="brand-name">Gap Scout</span><span class="brand-tag">KOSOVO</span></a>
     <nav class="side-nav" aria-label="Main">{{ nav_links(here, badges) }}</nav>
     <div class="side-foot">
-      {%- if nav_phase %}{% set ph = phase_info(nav_phase) %}
-      <div class="phase-pill" title="The scout's current phase">Phase<strong>{{ ph.text }}</strong>{{ ph.tip }}</div>
-      {%- endif %}
-      <form method="post" action="/logout"><button class="btn ghost block">{{ ui.icon("log-out") }}<span>Log out</span></button></form>
+      <div class="foot-card">
+        {%- if nav_phase %}{% set ph = phase_info(nav_phase) %}
+        <div class="foot-item" title="The scout's current phase"><span class="foot-label">Phase</span><strong>{{ ph.text }}</strong><span class="foot-sub">{{ ph.tip }}</span></div>
+        {%- endif %}
+        {%- if nav_next %}
+        <div class="foot-item"><span class="foot-label">Next run</span><strong>{{ nav_next }}</strong><span class="foot-sub">Runs by itself</span></div>
+        {%- endif %}
+      </div>
+      <p class="shortcuts">Press <kbd>g</kbd> then <kbd>h g a k s</kbd> to jump · <kbd>/</kbd> to search</p>
     </div>
   </aside>
   <header class="topbar">
-    <a class="brand" href="/" aria-label="Gap Scout home">{{ ui.icon("target") }}</a>
-    <span class="topbar-title">{{ self.title() }}</span>
-    <form method="post" action="/logout"><button aria-label="Log out">{{ ui.icon("log-out") }}</button></form>
+    <div class="topbar-row">
+      <a class="brand" href="/" aria-label="Gap Scout home"><span class="mark" aria-hidden="true"><span></span></span></a>
+      <span class="topbar-title">{{ sec.label }}</span>
+      {%- if nav_next %}<span class="topbar-next">Next run {{ nav_next | lower }}</span>{% endif %}
+      <form class="topbar-out" method="post" action="/logout"><button aria-label="Log out">{{ ui.icon("log-out") }}</button></form>
+    </div>
+    {%- if request.url.path != "/knowledge" %}
+    <form class="topbar-search" role="search" method="get" action="/knowledge">{{ ui.icon("search") }}<input name="q" placeholder="Search facts" aria-label="Search facts" data-search><kbd>/</kbd></form>
+    {%- endif %}
   </header>
   <nav class="tabbar" aria-label="Main (phone)">{{ nav_links(here, badges) }}</nav>
 {%- endif %}
