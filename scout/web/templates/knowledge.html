@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Knowledge{% endblock %}
+{% block content %}
+<h1>Knowledge</h1>
+<form method="get" action="/knowledge" class="row">
+  <input name="q" value="{{ q }}" placeholder="search facts (e.g. pet sitting Prizren)" style="flex:1">
+  <button>Search</button>
+</form>
+{% if q %}
+  <h2>Facts for “{{ q }}”</h2>
+  {% for f in facts %}
+    <div class="card">{{ f.claim }}
+      <div class="muted">{{ f.entity_type }}:{{ f.entity_key }} · conf {{ '%.2f'|format(f.confidence) }} · {{ f.source_name }}
+        · {{ f.observed_at.strftime('%Y-%m-%d') }}
+        {% if f.source_url and (f.source_url.startswith('http://') or f.source_url.startswith('https://')) %}
+          · <a href="{{ f.source_url }}" rel="noopener noreferrer" target="_blank">source</a>{% endif %}</div>
+    </div>
+  {% else %}<p class="muted">No matching facts.</p>{% endfor %}
+{% endif %}
+<h2>Sectors</h2>
+<table>
+  <tr><th>sector</th><th>status</th><th>prio</th><th>businesses</th><th>models</th><th>mapped</th></tr>
+  {% for s in sectors %}
+  <tr><td><a href="/knowledge/sectors/{{ s.slug }}">{{ s.name_en }}</a></td><td>{{ s.status }}</td><td>{{ s.priority }}</td>
+      <td>{{ business_counts.get(s.id, 0) }}</td><td>{{ model_counts.get(s.id, 0) }}</td>
+      <td>{{ s.last_mapped_at.strftime('%Y-%m-%d') if s.last_mapped_at else '—' }}</td></tr>
+  {% endfor %}
+</table>
+<h2>Other digests</h2>
+{% for d in other_digests %}<div><a href="/knowledge/digests/{{ d.key }}">{{ d.title }}</a> <span class="muted">{{ d.key }}</span></div>
+{% else %}<p class="muted">None.</p>{% endfor %}
+{% endblock %}
