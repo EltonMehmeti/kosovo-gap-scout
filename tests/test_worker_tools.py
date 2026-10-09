@@ -5,6 +5,7 @@ from decimal import Decimal
 import httpx
 import pytest
 
+from scout.budget.guard import BudgetGuard
 from scout.db import repo
 from scout.sources.askdata import AskDataClient
 from scout.sources.places import PlacesClient
@@ -14,19 +15,6 @@ from scout.worker import tools as T
 pytestmark = pytest.mark.db
 NOW = datetime(2026, 10, 19, 6, 0, tzinfo=UTC)
 DAY = date(2026, 10, 19)
-
-
-class FakeGuard:
-    """Stand-in for BudgetGuard (Task 6, not merged yet): day, can_afford, record."""
-
-    def __init__(self, session, day, run_id, cap=Decimal("3")):
-        self.session, self.day, self.run_id, self.cap = session, day, run_id, cap
-
-    def can_afford(self, amount):
-        return repo.spent_on(self.session, self.day) + amount < self.cap
-
-    def record(self, rec):
-        repo.record_cost(self.session, rec, day=self.day, run_id=self.run_id)
 
 
 def _places_http():
@@ -80,7 +68,7 @@ def ctx(db_session):
     run = repo.start_run(
         db_session, day=DAY, phase="foundation", budget_cap_eur=Decimal("3"), started_at=NOW
     )
-    guard = FakeGuard(db_session, DAY, run.id)
+    guard = BudgetGuard(db_session, day=DAY, daily_cap_eur=Decimal("3"), run_id=run.id)
     return T.ToolContext(
         session=db_session,
         guard=guard,
@@ -203,3 +191,66 @@ def test_build_tools_names_and_schemas(ctx):
         tools[0].call({"query": "pet", "sector": "pets"}).startswith(("DIGEST", "no facts", "- ["))
     )
     assert len(ctx.events) == 1 and ctx.events[0]["tool"] == "kb_search"
+
+
+VALID_INPUTS = {
+    "kb_search": {"query": "pet shops", "sector": "pets"},
+    "kb_record_fact": {
+        "claim": "Prizren has 3 pet shops",
+        "entity_type": "sector",
+        "entity_key": "pets",
+        "confidence": 0.7,
+        "source_url": "https://x",
+        "sector": "pets",
+        "ttl_days": 30,
+        "value_json": '{"count": 3}',
+    },
+    "kb_record_business": {
+        "name": "PetShop KS",
+        "sector": "pets",
+        "kind": "local",
+        "city": "Prishtinë",
+        "instagram": "petshopks",
+        "website": "https://petshop.example",
+        "facebook": "",
+        "note": "food and toys, cash on delivery",
+    },
+    "kb_record_proven_model": {
+        "slug": "pet-sitting-marketplace",
+        "name": "Pet sitting marketplace",
+        "sector": "pets",
+        "description": "Rover-style marketplace.",
+        "markets_json": json.dumps([{"country": "HR", "example": "Pawshake", "url": "https://p"}]),
+        "business_model": "commission",
+        "source_urls_json": json.dumps(["https://p"]),
+    },
+    "kb_propose_gap": {
+        "title": "Pet sitting marketplace",
+        "sector": "pets",
+        "hypothesis": "Diaspora families pay for sitters in summer.",
+        "presence_level": "unknown",
+        "proven_model_slug": "pet-sitting-marketplace",
+        "why_not_yet": "trust",
+    },
+    "kb_write_digest": {"key": "sector:pets", "title": "Pets", "body_md": "# Pets"},
+    "places_search": {"query": "veteriner", "city": "Prizren", "language": "sq"},
+    "app_store_search": {"term": "pet", "store": "both"},
+    "askdata_list": {"path": ""},
+    "askdata_table": {"path": "Population/t.px"},
+    "askdata_fetch": {"path": "Population/t.px", "selections_json": '{"Y": ["2024"]}'},
+}
+
+
+def test_every_built_tool_succeeds_through_its_real_call_path(ctx):
+    """Each tool object the runner sees, invoked via .call() exactly as the SDK runner does."""
+    tools = T.build_tools(ctx)
+    assert set(VALID_INPUTS) == set(T.TOOL_NAMES) == {t.name for t in tools}
+    for tool in tools:
+        out = tool.call(VALID_INPUTS[tool.name])
+        assert isinstance(out, str) and out, tool.name
+        assert not out.lower().startswith("error"), f"{tool.name}: {out}"
+    assert [e["tool"] for e in ctx.events] == list(T.TOOL_NAMES)
+    assert not any(e["error"] for e in ctx.events)
+    assert repo.list_businesses(ctx.session, "pets")[0].name == "PetShop KS"
+    gap = repo.get_gap_by_title(ctx.session, "pets", "Pet sitting marketplace")
+    assert gap is not None and gap.proven_model_id is not None

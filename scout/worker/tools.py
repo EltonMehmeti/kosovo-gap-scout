@@ -322,12 +322,13 @@ def askdata_fetch_impl(ctx: ToolContext, path: str, selections_json: str) -> str
 # ---------- tool objects ----------
 
 
-def _run(ctx: ToolContext, name: str, fn: Callable, **kwargs) -> str:
+def _run(ctx: ToolContext, tool_name: str, fn: Callable, /, **kwargs) -> str:
+    """Run one tool. Positional-only head: a tool argument called `name` can never collide."""
     try:
         out = fn(ctx, **kwargs)
     except Exception as e:  # noqa: BLE001 — tool errors go back to the model as text
         out = f"error: {type(e).__name__}: {str(e)[:300]}"
-    ctx.events.append({"tool": name, "chars": len(out), "error": out.startswith("error:")})
+    ctx.events.append({"tool": tool_name, "chars": len(out), "error": out.startswith("error:")})
     return out
 
 
