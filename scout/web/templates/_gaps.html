@@ -1,0 +1,37 @@
+{# Gap-page macros. Import with: {% import "_gaps.html" as gaps_ui with context %} #}
+{% import "_ui.html" as ui with context %}
+
+{% macro gap_chips(g, is_finalist, is_flagged) -%}
+{%- if is_finalist or is_flagged or g.critic_flag %}
+<div class="chips">
+  {%- if is_finalist %}{{ ui.chip("★ Finalist", "indigo", "You picked this as a finalist.") }}{% endif %}
+  {%- if is_flagged %}{{ ui.chip("Check requested", "amber", "The scout re-checks this gap in its next run.") }}{% endif %}
+  {%- if g.critic_flag %}{% set f = flag_label(g.critic_flag) %}{{ ui.chip(f.text, f.tone, f.tip) }}{% endif %}
+</div>
+{%- endif %}
+{%- endmacro %}
+
+{% macro gap_card(g, sector_name, finalists, flagged, next) -%}
+<article class="gap-card">
+  <a class="gap-title" href="/gaps/{{ g.id }}">{{ g.title }}</a>
+  {% if sector_name %}<div class="gap-meta">{{ sector_name }}</div>{% endif %}
+  {{ ui.score_bar(g.score_total if g.score_components else none) }}
+  {{ gap_chips(g, g.id in finalists, g.id in flagged) }}
+  <div class="gap-foot">
+    <span>updated {{ ui.date(g.updated_at) }}</span>
+    <details class="more">
+      <summary class="btn sm ghost">Actions</summary>
+      {{ ui.gap_actions(g, finalists, flagged, next) }}
+    </details>
+  </div>
+</article>
+{%- endmacro %}
+
+{% macro readable(v) -%}
+{%- if v is none %}—
+{%- elif v is string %}{{ v }}
+{%- elif v is mapping %}<dl class="kv">{% for k, x in v.items() %}<dt>{{ k | string | replace("_", " ") | capitalize }}</dt><dd>{{ readable(x) }}</dd>{% endfor %}</dl>
+{%- elif v is iterable %}<ul>{% for x in v %}<li>{{ readable(x) }}</li>{% endfor %}</ul>
+{%- else %}{{ v }}
+{%- endif %}
+{%- endmacro %}

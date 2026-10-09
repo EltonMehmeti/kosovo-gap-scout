@@ -46,4 +46,7 @@ def answer(
         )
     except FounderError as e:
         return back("/field-checks", err=str(e))
-    return back("/field-checks", msg="Answered; verify-gap queued" if fc.gap_id else "Answered")
+    return back(
+        "/field-checks",
+        msg="Answer saved — the scout will re-check this gap" if fc.gap_id else "Answer saved",
+    )

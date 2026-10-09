@@ -1,4 +1,4 @@
-"""Gaps board: status columns, detail, and the founder's Verify / Park / Kill / Finalist buttons."""
+"""Gaps board: status columns (a filter on phones), detail, and the founder's buttons."""
 
 from __future__ import annotations
 
@@ -13,19 +13,26 @@ from scout import founder
 from scout.db import repo
 from scout.db.models import FieldCheck, GapAssessment, ProvenModel
 from scout.founder import FounderError
+from scout.web import ui
 from scout.web.deps import back, get_session, local_day, local_path, page
 
 router = APIRouter()
-STATUS_ORDER = ("verified", "verifying", "candidate", "parked", "killed")
+BOARD_COLUMNS = ("candidate", "verifying", "verified", "parked")  # Rejected sits below, collapsed
 
 
 @router.get("/gaps", response_class=HTMLResponse)
-def gaps_page(request: Request, session: Session = Depends(get_session)):
+def gaps_page(request: Request, status: str = "", session: Session = Depends(get_session)):
     all_gaps = repo.list_gaps(session)
+    columns = [(st, [g for g in all_gaps if g.status == st]) for st in BOARD_COLUMNS]
+    if status not in BOARD_COLUMNS:  # phones show one column: default to the first non-empty one
+        status = next((st for st, items in columns if items), BOARD_COLUMNS[0])
     return page(
         request,
         "gaps.html",
-        board=[(st, [g for g in all_gaps if g.status == st]) for st in STATUS_ORDER],
+        columns=columns,
+        rejected=[g for g in all_gaps if g.status == "killed"],
+        selected=status,
+        total=len(all_gaps),
         sectors={s.id: s for s in repo.list_sectors(session)},
         finalists=set(founder.finalists(session)),
         flagged=set(founder.flagged(session)),
@@ -75,7 +82,7 @@ def gap_status(
         )
     except FounderError as e:
         return back(local_path(next), err=str(e))
-    return back(local_path(next), msg=f"{gap.title}: {gap.status}")
+    return back(local_path(next), msg=f"{gap.title}: {ui.status_label(gap.status).text}")
 
 
 @router.post("/gaps/{gap_id}/flag")
@@ -92,7 +99,9 @@ def gap_flag(
         return back(local_path(next), err=str(e))
     return back(
         local_path(next),
-        msg="Verify request withdrawn" if unflag == "1" else "Queued for re-verification",
+        msg="Check cancelled"
+        if unflag == "1"
+        else "Check requested — the scout re-checks it next run",
     )
 
 
@@ -107,4 +116,6 @@ def gap_finalist(
         ids = founder.toggle_finalist(session, gap_id, today=local_day(request))
     except FounderError as e:
         return back(local_path(next), err=str(e))
-    return back(local_path(next), msg="Finalist added" if gap_id in ids else "Finalist removed")
+    return back(
+        local_path(next), msg="Added to finalists" if gap_id in ids else "Removed from finalists"
+    )
