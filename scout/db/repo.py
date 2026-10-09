@@ -732,3 +732,38 @@ def set_gap_test_plan(session: Session, gap_id: int, md: str) -> None:
 
 def runs_on_day(session: Session, day: date) -> list[Run]:
     return list(session.scalars(select(Run).where(Run.day == day).order_by(Run.id)))
+
+
+def release_stale_tasks(session: Session, *, claimed_before: datetime) -> int:
+    """Put tasks stuck in 'running' (claimed before the cutoff) back in the queue."""
+    stale = list(
+        session.scalars(
+            select(Task).where(Task.status == "running", Task.started_at < claimed_before)
+        )
+    )
+    for t in stale:
+        t.status = "queued"
+        t.locked_by = None
+    session.commit()
+    return len(stale)
+
+
+def release_task(session: Session, task: Task, *, give_back_attempt: bool = False) -> None:
+    """Return a claimed, unfinished task to the queue (optionally undoing the claim's attempt)."""
+    task.status = "queued"
+    task.locked_by = None
+    if give_back_attempt and task.attempts > 0:
+        task.attempts -= 1
+    session.commit()
+
+
+def release_run_tasks(session: Session, run_id: int) -> int:
+    """Requeue every task of this run that is still claimed ('running')."""
+    stuck = list(
+        session.scalars(select(Task).where(Task.run_id == run_id, Task.status == "running"))
+    )
+    for t in stuck:
+        t.status = "queued"
+        t.locked_by = None
+    session.commit()
+    return len(stuck)

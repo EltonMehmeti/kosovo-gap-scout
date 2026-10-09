@@ -126,6 +126,13 @@ def _gaps_md(session, sector_slug: str | None, gap_id: int | None, now: datetime
     )
 
 
+def _task_est(task) -> Decimal:
+    if task.profile == "chart-diff":
+        return CHART_DIFF_EST
+    profile = PROFILES.get(task.profile)
+    return profile.est_cost_eur if profile is not None else Decimal("0")
+
+
 def run_once(
     settings: Settings,
     *,
@@ -155,6 +162,7 @@ def run_once(
     if places is None and settings.google_places_api_key:
         places = PlacesClient(settings.google_places_api_key)
     session = session_factory()
+    run_id: int | None = None
     try:
         phase = (
             phase_override
@@ -169,12 +177,122 @@ def run_once(
             else min(PHASE_RULES[phase]["cap"], Decimal(settings.daily_budget_eur))
         )
         run = repo.start_run(session, day=today, phase=phase, budget_cap_eur=cap, started_at=now)
-        guard = BudgetGuard(session, day=today, daily_cap_eur=cap, run_id=run.id)
-        llm = LLM(client, guard, Decimal(settings.usd_to_eur))
-        deadline = now + timedelta(minutes=settings.run_max_minutes)
-        journal_md = journal_markdown(repo.latest_journal(session, limit=3))
-        notes: list[str] = []
+        run_id = run.id
+        return _run_body(
+            settings,
+            session,
+            run,
+            today=today,
+            now=now,
+            phase=phase,
+            cap=cap,
+            dry_run=dry_run,
+            client=client,
+            places=places,
+            askdata=askdata,
+            apple_fetch=apple_fetch,
+            play_fetch=play_fetch,
+            runner_factory=runner_factory,
+            clock=clock,
+            worker_id=worker_id,
+        )
+    except BaseException as exc:
+        if run_id is not None:
+            _close_failed(session, session_factory, run_id, exc, clock())
+        raise
+    finally:
+        session.close()
 
+
+def _close_failed(session, session_factory, run_id: int, exc: BaseException, at: datetime) -> None:
+    """Never leave a run 'running': release its claimed tasks and mark it failed (fresh session if needed)."""
+    tail = "".join(traceback.format_exception(exc))[-1500:]
+    summary = f"failed: {type(exc).__name__}: {exc}\n{tail}"[:4000]
+    for attempt in (session, None):
+        s = attempt if attempt is not None else session_factory()
+        try:
+            s.rollback()
+            repo.release_run_tasks(s, run_id)
+            row = s.get(repo.Run, run_id)
+            if row is not None:
+                repo.finish_run(
+                    s,
+                    row,
+                    spent_eur=row.spent_eur,
+                    tasks_done=row.tasks_done,
+                    tasks_failed=row.tasks_failed,
+                    summary_md=summary,
+                    finished_at=at,
+                    status="failed",
+                )
+            return
+        except Exception:  # noqa: BLE001 — fall back to a fresh session, then give up quietly
+            continue
+        finally:
+            if attempt is None:
+                s.close()
+
+
+def _run_body(
+    settings,
+    session,
+    run,
+    *,
+    today,
+    now,
+    phase,
+    cap,
+    dry_run,
+    client,
+    places,
+    askdata,
+    apple_fetch,
+    play_fetch,
+    runner_factory,
+    clock,
+    worker_id,
+) -> RunSummary:
+    guard = BudgetGuard(session, day=today, daily_cap_eur=cap, run_id=run.id)
+    llm = LLM(client, guard, Decimal(settings.usd_to_eur))
+    deadline = now + timedelta(minutes=settings.run_max_minutes)
+    journal_md = journal_markdown(repo.latest_journal(session, limit=3))
+    notes: list[str] = []
+    planned: list = []
+    done = failed = 0
+    chart_report = None
+    stopped_reason = "queue empty"
+    exhausted = guard.spent() >= cap
+
+    if exhausted:  # spec B2.1: refuse the work if the cap is already spent; still brief and close
+        stopped_reason = "budget"
+    elif dry_run:
+        earlier_runs = [r.id for r in repo.runs_on_day(session, today) if r.id != run.id]
+        state = load_state(session, today=today, now=now, cap=cap, run_ids_today=earlier_runs)
+        queued = repo.queued_tasks(session)
+        keys = {_key(t.profile, t.payload or {}) for t in queued}
+        extra = [p for p in plan_tasks(state, phase) if _key(p.profile, p.payload) not in keys]
+        lines = [
+            f"- {t.profile} {t.payload} (priority {t.priority}, est €{t.est_cost_eur})"
+            for t in [*queued, *extra]
+        ]
+        repo.finish_run(
+            session,
+            run,
+            spent_eur=Decimal("0"),
+            tasks_done=0,
+            tasks_failed=0,
+            summary_md="dry run\n" + "\n".join(lines),
+            finished_at=clock(),
+            status="dry-run",
+        )
+        return RunSummary(
+            run.id, today, phase, len(lines), 0, 0, Decimal("0"), "\n".join(lines), "dry run"
+        )
+    else:
+        stale_cut = now - timedelta(minutes=settings.run_max_minutes)
+        released = repo.release_stale_tasks(session, claimed_before=stale_cut)
+        if released:
+            notes.append(f"released {released} stale running task(s)")
         # 1. plan
         earlier_runs = [r.id for r in repo.runs_on_day(session, today) if r.id != run.id]
         state = load_state(session, today=today, now=now, cap=cap, run_ids_today=earlier_runs)
@@ -204,42 +322,27 @@ def run_once(
                 notes += review_notes
             except (LLMError, BudgetExceeded, anthropic.APIError) as e:
                 notes.append(f"director review skipped: {type(e).__name__}")
-        if dry_run:
-            lines = [
-                f"- {t.profile} {t.payload} (priority {t.priority}, est €{t.est_cost_eur})"
-                for t in planned
-            ]
-            repo.finish_run(
-                session,
-                run,
-                spent_eur=Decimal("0"),
-                tasks_done=0,
-                tasks_failed=0,
-                summary_md="dry run\n" + "\n".join(lines),
-                finished_at=clock(),
-                status="dry-run",
-            )
-            return RunSummary(
-                run.id, today, phase, len(planned), 0, 0, Decimal("0"), "\n".join(lines), "dry run"
-            )
 
         # 2. execute
         system = build_system(session)
         worker = ResearchWorker(client, llm, guard, system, runner_factory=runner_factory)
         extractor = Extractor(llm)
-        done = failed = 0
-        chart_report = None
-        stopped_reason = "queue empty"
         while True:
             if clock() >= deadline:
                 stopped_reason = "time limit"
                 break
+            queue = repo.queued_tasks(session)
+            if not queue:
+                break
+            if not guard.can_afford(_task_est(queue[0])):  # check BEFORE claiming; it stays queued
+                stopped_reason = "budget"
+                break
             task = repo.claim_next_task(session, worker_id, now=clock())
             if task is None:
                 break
-            try:
+            outcome = None
+            try:  # the work itself (the only part whose failure may requeue a task)
                 if task.profile == "chart-diff":
-                    guard.check(CHART_DIFF_EST)
                     spent_before = guard.spent()
                     chart_report = run_chart_diff(
                         session, today, apple_fetch=apple_fetch, play_fetch=play_fetch
@@ -247,17 +350,13 @@ def run_once(
                     n = classify_and_record(
                         session, extractor, chart_report, now=clock(), run_id=run.id
                     )
-                    summary_md = (
+                    result_md = (
                         f"snapshots {chart_report.snapshots_saved}; leads {len(chart_report.leads)}; "
                         f"facts {n}; new in Kosovo: {', '.join(chart_report.new_in_kosovo) or 'none'}"
                     )
                     cost = guard.spent() - spent_before
-                    repo.finish_task(
-                        session, task, result_md=summary_md, actual_cost_eur=cost, now=clock()
-                    )
                 else:
                     profile = PROFILES[task.profile]
-                    guard.check(profile.est_cost_eur)
                     payload = dict(task.payload or {})
                     sector = payload.get("sector")
                     digest = repo.get_digest(session, f"sector:{sector}") if sector else None
@@ -286,43 +385,12 @@ def run_once(
                         askdata=askdata,
                     )
                     outcome = worker.run(task.id, profile, brief, ctx)
-                    repo.finish_task(
-                        session,
-                        task,
-                        result_md=outcome.summary_md,
-                        actual_cost_eur=outcome.cost_eur,
-                        now=clock(),
-                    )
-                    if task.profile == "map-sector" and sector:
-                        repo.set_sector_status(session, sector, "mapped", now=clock())
-                    if task.profile == "hunt-models" and sector:
-                        repo.set_sector_status(session, sector, "hunted", now=clock())
-                    if task.profile == "deep-dive" and payload.get("gap_id"):
-                        repo.set_gap_test_plan(session, int(payload["gap_id"]), outcome.summary_md)
-                        repo.set_setting(
-                            session, f"deep-dive-done:{today.replace(day=1).isoformat()}", True
-                        )
-                    if task.profile == "verify-gap" and payload.get("gap_id"):
-                        for line in outcome.summary_md.splitlines():
-                            if (
-                                line.lower().startswith("field-check:")
-                                and len(repo.open_field_checks(session)) < 5
-                            ):
-                                repo.add_field_check(
-                                    session,
-                                    gap_id=int(payload["gap_id"]),
-                                    question=line.split(":", 1)[1].strip(),
-                                    why="verify-gap was ambiguous",
-                                    due=today + timedelta(days=7),
-                                )
-                    if outcome.budget_stopped:
-                        stopped_reason = "budget"
-                        done += 1
-                        break
-                done += 1
-            except BudgetExceeded as e:
-                repo.fail_task(session, task, error=f"budget: {e}", now=clock(), requeue=False)
-                failed += 1
+                    result_md, cost = outcome.summary_md, outcome.cost_eur
+            except BudgetExceeded:
+                session.rollback()
+                repo.release_task(
+                    session, task, give_back_attempt=True
+                )  # stays queued for tomorrow
                 stopped_reason = "budget"
                 break
             except Exception as e:  # noqa: BLE001 — one bad task must not end the day
@@ -334,93 +402,136 @@ def run_once(
                     now=clock(),
                     requeue=True,
                 )
-                failed += 1
-
-        # 3. judge
-        changes = []
-        strategist = Strategist(llm, session)
-        fresh = repo.fresh_facts_since(session, run.started_at, now=clock())
-        if fresh or new_tasks:
-            try:
-                inputs = strategist.collect_inputs(
-                    since=run.started_at - timedelta(hours=1), now=clock()
+                if task.status == "failed":
+                    failed += 1
+                continue
+            try:  # post-processing of paid work: never requeue (would repay for the research)
+                repo.finish_task(
+                    session, task, result_md=result_md, actual_cost_eur=cost, now=clock()
                 )
-                if inputs.gaps or inputs.facts:
-                    output = strategist.assess(inputs, today)
-                    critic = strategist.critique(output, inputs, today)
-                    applied = strategist.apply(output, critic, now=clock(), run_id=run.id)
-                    changes = applied.changes
-                    notes.append(
-                        f"strategist: {output.headline}; new gaps {applied.new_gaps}; "
-                        f"field checks {applied.field_checks_added}"
+                if outcome is not None:
+                    _apply_outcome(session, task, outcome, today=today, now=clock())
+            except Exception as e:  # noqa: BLE001
+                session.rollback()
+                session.refresh(task)
+                notes.append(
+                    f"post-processing {task.profile} failed: {type(e).__name__}: {e}"[:300]
+                )
+                if task.status == "running":
+                    repo.fail_task(
+                        session, task, error=f"post-processing: {e}", now=clock(), requeue=False
                     )
-            except (LLMError, BudgetExceeded, anthropic.APIError) as e:
-                notes.append(f"strategy skipped: {type(e).__name__}: {str(e)[:120]}")
+            if task.status == "failed":
+                failed += 1
+            else:
+                done += 1
+            if outcome is not None and outcome.budget_stopped:
+                stopped_reason = "budget"
+                break
 
-        # 4. write and remember
-        brief_md = write_brief(
-            session, llm, run, today=today, now=clock(), changes=changes, chart_report=chart_report
-        )
-        spent = guard.spent()  # after the brief so its narrative cost is included
-        tasks = repo.tasks_for_run(session, run.id)
-        did = (
-            "; ".join(
-                f"{t.profile} {(t.payload or {}).get('sector') or (t.payload or {}).get('gap_title') or (t.payload or {}).get('theme') or ''} ({t.status})"
-                for t in tasks
+    # 3. judge (only when this run produced new facts)
+    changes = []
+    strategist = Strategist(llm, session)
+    fresh = repo.fresh_facts_since(session, run.started_at, now=clock())
+    if fresh:
+        try:
+            inputs = strategist.collect_inputs(
+                since=run.started_at - timedelta(hours=1), now=clock()
             )
-            or "nothing"
+            if inputs.gaps or inputs.facts:
+                output = strategist.assess(inputs, today)
+                critic = strategist.critique(output, inputs, today)
+                applied = strategist.apply(output, critic, now=clock(), run_id=run.id)
+                changes = applied.changes
+                notes.append(
+                    f"strategist: {output.headline}; new gaps {applied.new_gaps}; "
+                    f"field checks {applied.field_checks_added}"
+                )
+        except (LLMError, BudgetExceeded, anthropic.APIError) as e:
+            notes.append(f"strategy skipped: {type(e).__name__}: {str(e)[:120]}")
+
+    # 4. write and remember
+    brief_md = write_brief(
+        session, llm, run, today=today, now=clock(), changes=changes, chart_report=chart_report
+    )
+    spent = guard.spent()  # after the brief so its narrative cost is included
+    tasks = repo.tasks_for_run(session, run.id)
+    did = (
+        "; ".join(
+            f"{t.profile} {(t.payload or {}).get('sector') or (t.payload or {}).get('gap_title') or (t.payload or {}).get('theme') or ''} ({t.status})"
+            for t in tasks
         )
-        learned = "\n".join(f"- {f.claim[:160]}" for f in fresh[:8]) or "- nothing new"
-        unmapped = [s.slug for s in repo.list_sectors(session) if s.status == "unmapped"][:3]
-        tomorrow = (
-            f"next sectors: {', '.join(unmapped) or 'all mapped'}; open field checks: "
-            f"{len(repo.open_field_checks(session))}; " + "; ".join(notes)
-        )
-        repo.write_journal(
-            session, run_id=run.id, day=today, did_md=did, learned_md=learned, tomorrow_md=tomorrow
-        )
-        gaps = repo.list_gaps(session)
-        by_status: dict[str, int] = {}
-        for g in gaps:
-            by_status[g.status] = by_status.get(g.status, 0) + 1
-        top10 = [g.confidence for g in gaps[:10]]
-        all_facts = session.query(repo.Fact).count()
-        fresh_total = session.query(repo.Fact).filter(repo.Fact.expires_at > clock()).count()
-        first = today.replace(day=1)
-        metrics = {
-            "sectors_mapped": sum(1 for s in repo.list_sectors(session) if s.status != "unmapped"),
-            "proven_models": session.query(repo.ProvenModel).count(),
-            "gaps_by_status": by_status,
-            "avg_confidence_top10": round(sum(top10) / len(top10), 3) if top10 else 0,
-            "facts_fresh_ratio": round(fresh_total / all_facts, 3) if all_facts else 0,
-            "spend_mtd": str(repo.spent_between(session, first, today)),
-            "searches_mtd": sum(
-                int((c.units or {}).get("web_search_requests", 0))
-                for c in session.query(repo.Cost).filter(repo.Cost.day >= first)
-            ),
-            "field_checks_open": len(repo.open_field_checks(session)),
-            "field_checks_answered": session.query(repo.FieldCheck)
-            .filter_by(status="answered")
-            .count(),
-            "days_run": session.query(repo.Run.day)
-            .filter(repo.Run.status == "done")
-            .distinct()
-            .count()
-            + 1,
-        }
-        repo.save_scorecard(session, day=today, metrics=metrics)
-        repo.finish_run(
-            session,
-            run,
-            spent_eur=spent,
-            tasks_done=done,
-            tasks_failed=failed,
-            summary_md=brief_md[:4000],
-            finished_at=clock(),
-            status="done",
-        )
-        return RunSummary(
-            run.id, today, phase, len(planned), done, failed, spent, brief_md, stopped_reason
-        )
-    finally:
-        session.close()
+        or "nothing"
+    )
+    learned = "\n".join(f"- {f.claim[:160]}" for f in fresh[:8]) or "- nothing new"
+    unmapped = [s.slug for s in repo.list_sectors(session) if s.status == "unmapped"][:3]
+    tomorrow = (
+        f"next sectors: {', '.join(unmapped) or 'all mapped'}; open field checks: "
+        f"{len(repo.open_field_checks(session))}; " + "; ".join(notes)
+    )
+    repo.write_journal(
+        session, run_id=run.id, day=today, did_md=did, learned_md=learned, tomorrow_md=tomorrow
+    )
+    gaps = repo.list_gaps(session)
+    by_status: dict[str, int] = {}
+    for g in gaps:
+        by_status[g.status] = by_status.get(g.status, 0) + 1
+    top10 = [g.confidence for g in gaps[:10]]
+    all_facts = session.query(repo.Fact).count()
+    fresh_total = session.query(repo.Fact).filter(repo.Fact.expires_at > clock()).count()
+    first = today.replace(day=1)
+    metrics = {
+        "sectors_mapped": sum(1 for s in repo.list_sectors(session) if s.status != "unmapped"),
+        "proven_models": session.query(repo.ProvenModel).count(),
+        "gaps_by_status": by_status,
+        "avg_confidence_top10": round(sum(top10) / len(top10), 3) if top10 else 0,
+        "facts_fresh_ratio": round(fresh_total / all_facts, 3) if all_facts else 0,
+        "spend_mtd": str(repo.spent_between(session, first, today)),
+        "searches_mtd": sum(
+            int((c.units or {}).get("web_search_requests", 0))
+            for c in session.query(repo.Cost).filter(repo.Cost.day >= first)
+        ),
+        "field_checks_open": len(repo.open_field_checks(session)),
+        "field_checks_answered": session.query(repo.FieldCheck)
+        .filter_by(status="answered")
+        .count(),
+        "days_run": session.query(repo.Run.day).filter(repo.Run.status == "done").distinct().count()
+        + 1,
+    }
+    repo.save_scorecard(session, day=today, metrics=metrics)
+    repo.finish_run(
+        session,
+        run,
+        spent_eur=spent,
+        tasks_done=done,
+        tasks_failed=failed,
+        summary_md=brief_md[:4000],
+        finished_at=clock(),
+        status="done",
+    )
+    return RunSummary(
+        run.id, today, phase, len(planned), done, failed, spent, brief_md, stopped_reason
+    )
+
+
+def _apply_outcome(session, task, outcome, *, today, now) -> None:
+    payload = task.payload or {}
+    sector = payload.get("sector")
+    complete = not outcome.budget_stopped and not outcome.truncated
+    if complete and task.profile == "map-sector" and sector:
+        repo.set_sector_status(session, sector, "mapped", now=now)
+    if complete and task.profile == "hunt-models" and sector:
+        repo.set_sector_status(session, sector, "hunted", now=now)
+    if complete and task.profile == "deep-dive" and payload.get("gap_id"):
+        repo.set_gap_test_plan(session, int(payload["gap_id"]), outcome.summary_md)
+        repo.set_setting(session, f"deep-dive-done:{today.replace(day=1).isoformat()}", True)
+    if task.profile == "verify-gap" and payload.get("gap_id"):
+        for line in outcome.summary_md.splitlines():
+            if line.lower().startswith("field-check:") and len(repo.open_field_checks(session)) < 5:
+                repo.add_field_check(
+                    session,
+                    gap_id=int(payload["gap_id"]),
+                    question=line.split(":", 1)[1].strip(),
+                    why="verify-gap was ambiguous",
+                    due=today + timedelta(days=7),
+                )
