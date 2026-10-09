@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -52,9 +53,11 @@ def test_queue_runs_failures_and_retry(web, db_session):
     db_session.commit()
     q = repo.enqueue_task(db_session, profile="culture", payload={"theme": "x"}, priority=30)
     r = web.get("/pipeline")
-    assert (
-        f"#{q.id}" in r.text and "boom: &lt;b&gt;bad&lt;/b&gt;" in r.text and "foundation" in r.text
-    )
+    assert f"#{q.id}" in r.text and "boom: &lt;b&gt;bad&lt;/b&gt;" in r.text
+    assert "Culture research" in r.text and "News scan" in r.text and "Retry" in r.text
+    assert f"Run #{run.id}" in r.text and "Foundation" in r.text
+    assert re.search(r'data-stat="failed">.*?<strong>1</strong>', r.text, re.S)
+    assert re.search(r'data-stat="waiting">.*?<strong>1</strong>', r.text, re.S)
     web.post(f"/tasks/{t.id}/retry")
     db_session.expire_all()
     assert db_session.get(type(t), t.id).status == "queued"
@@ -81,4 +84,38 @@ def test_journal_shows_scout_and_founder_entries(web, db_session):
     )
     r = web.get("/journal")
     assert "<strong>pets</strong>" in r.text and "Founder: kill gap #1" in r.text
-    assert "Run #1" in r.text and "Founder" in r.text
+    assert "<strong>pets</strong>" in r.text and "Founder: kill gap #1" in r.text
+    assert "Scout · run #1" in r.text and ">You</span>" in r.text
+
+
+def test_empty_activity_pages_explain_themselves(web):
+    pipeline = web.get("/pipeline").text
+    assert "Nothing waiting" in pipeline and "No runs yet" in pipeline
+    assert "Nothing in the journal yet" in web.get("/journal").text
+
+
+def test_add_task_form_uses_plain_names(web):
+    html = web.get("/pipeline").text
+    assert '<option value="map-sector">Map a sector</option>' in html
+    assert "0–100, higher runs sooner" in html and "Queue task" in html
+    assert '<a href="/journal">Journal</a>' in html  # section tab
+
+
+def test_queued_message_names_the_task_plainly(web, db_session):
+    seed_all(db_session)
+    r = web.post("/tasks", data={"profile": "map-sector", "sector": "pets", "priority": "70"})
+    assert "Queued task #" in r.text and "Map a sector" in r.text
+
+
+def test_a_dry_run_shows_as_plan_only(web, db_session):
+    run = repo.start_run(
+        db_session,
+        day=date(2026, 10, 9),
+        phase="foundation",
+        budget_cap_eur=Decimal("1.00"),
+        started_at=datetime(2026, 10, 9, 6, tzinfo=UTC),
+    )
+    run.status = "dry-run"
+    db_session.commit()
+    r = web.get("/pipeline")
+    assert r.status_code == 200 and "Plan only" in r.text

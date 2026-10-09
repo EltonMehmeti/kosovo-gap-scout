@@ -1,16 +1,19 @@
-"""Pipeline: what ran, what is queued, what failed; retry and add tasks."""
+"""Pipeline: failures to retry, tasks waiting for the next run, running tasks and past runs."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from scout import founder
 from scout.db import repo
 from scout.db.models import Run, Task
 from scout.founder import FounderError
+from scout.web import ui
 from scout.web.deps import back, get_session, local_day, page
 
 router = APIRouter()
@@ -19,18 +22,22 @@ router = APIRouter()
 @router.get("/pipeline", response_class=HTMLResponse)
 def pipeline_page(request: Request, session: Session = Depends(get_session)):
     last = repo.last_run(session)
+    failed = select(Task).where(Task.status == "failed")
     return page(
         request,
         "pipeline.html",
         queue=repo.queued_tasks(session),
+        running=session.scalars(
+            select(Task).where(Task.status == "running").order_by(Task.id)
+        ).all(),
+        failed=session.scalars(failed.order_by(Task.id.desc()).limit(20)).all(),
+        failed_count=session.scalar(select(func.count()).select_from(failed.subquery())) or 0,
         last=last,
         last_tasks=repo.tasks_for_run(session, last.id if last else None),
         runs=session.scalars(select(Run).order_by(Run.id.desc()).limit(14)).all(),
-        failed=session.scalars(
-            select(Task).where(Task.status == "failed").order_by(Task.id.desc()).limit(20)
-        ).all(),
         profiles=founder.TASK_PROFILES,
         sectors=repo.list_sectors(session),
+        next_run=ui.next_run_text(datetime.now(UTC), request.app.state.settings.timezone),
     )
 
 
@@ -67,7 +74,7 @@ def add_task(
         )
     except FounderError as e:
         return back("/pipeline", err=str(e))
-    return back("/pipeline", msg=f"Queued task #{task.id} ({task.profile})")
+    return back("/pipeline", msg=f"Queued task #{task.id}: {ui.profile_label(task.profile)}")
 
 
 @router.post("/tasks/{task_id}/retry")
