@@ -88,3 +88,44 @@ class FakeGuard:
     def record(self, rec) -> Decimal:
         self.records.append(rec)
         return self.spent()
+
+
+class FakeRunner:
+    """Yields queued messages like the SDK runner; stops after a message without tool_use."""
+
+    def __init__(self, messages, max_iterations=None) -> None:
+        self._messages = list(messages)
+        self._max = max_iterations
+        self._count = 0
+        self._last = None
+
+    def __iter__(self):
+        while self._messages and (self._max is None or self._count < self._max):
+            self._last = self._messages.pop(0)
+            self._count += 1
+            yield self._last
+            if not any(getattr(b, "type", "") == "tool_use" for b in self._last.content):
+                return
+
+    def generate_tool_call_response(self):
+        if self._last is None:
+            return None
+        uses = [b for b in self._last.content if getattr(b, "type", "") == "tool_use"]
+        if not uses:
+            return None
+        return {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": u.id, "content": "ok"} for u in uses
+            ],
+        }
+
+
+def fake_runner_factory(script: list[list], calls: list[dict]):
+    """Each runner construction pops the next list of messages from `script` and logs its kwargs."""
+
+    def factory(**kwargs):
+        calls.append(kwargs)
+        return FakeRunner(script.pop(0), kwargs.get("max_iterations"))
+
+    return factory
