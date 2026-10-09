@@ -36,4 +36,5 @@ def test_extract_calls_haiku_low_effort_and_clips_text():
     kw = client.messages.calls[0]
     assert kw["model"] == "claude-haiku-5-5" and kw["output_config"] == {"effort": "low"}
     assert kw["system"] == EXTRACTOR_SYSTEM and kw["output_format"] is AppClassificationBatch
-    assert len(kw["messages"][0]["content"]) < MAX_TEXT_CHARS + 200
+    expected = f"Classify these apps.\n\n<text>\n{'x' * MAX_TEXT_CHARS}\n</text>"
+    assert kw["messages"][0]["content"] == expected
