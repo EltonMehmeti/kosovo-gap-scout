@@ -20,7 +20,9 @@ class Settings(BaseSettings):
         env_prefix="SCOUT_", env_file=".env", extra="ignore", populate_by_name=True
     )
 
-    anthropic_api_key: str = Field(alias="ANTHROPIC_API_KEY")
+    anthropic_api_key: str = Field(
+        default="", alias="ANTHROPIC_API_KEY"
+    )  # the dashboard runs without it
     database_url: str = Field(alias="DATABASE_URL")
     google_places_api_key: str | None = Field(default=None, alias="GOOGLE_PLACES_API_KEY")
     apify_token: str | None = Field(default=None, alias="APIFY_TOKEN")

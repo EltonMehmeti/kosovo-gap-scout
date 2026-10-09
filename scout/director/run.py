@@ -155,6 +155,8 @@ def run_once(
     clock=None,
     worker_id: str = "director",
 ) -> RunSummary:
+    if not settings.anthropic_api_key and client is None:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set; the scout cannot run without it")
     clock = clock or (
         lambda: datetime.now(UTC)
     )  # the only wall-clock read; tests inject a fixed one

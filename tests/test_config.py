@@ -37,3 +37,22 @@ def test_settings_read_env(monkeypatch):
     assert s.phase == "verification"
     assert s.timezone == "Europe/Belgrade"
     assert s.director_review is True
+
+
+def test_anthropic_key_is_optional_for_the_dashboard(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("DASHBOARD_TOKEN", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h/db")
+    s = Settings(_env_file=None)
+    assert s.anthropic_api_key == "" and s.dashboard_token is None
+
+
+def test_run_once_refuses_without_an_anthropic_key(monkeypatch):
+    import pytest
+
+    from scout.director.run import run_once
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    s = Settings(_env_file=None, DATABASE_URL="postgresql://u:p@h/db")
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+        run_once(s, session_factory=lambda: None)

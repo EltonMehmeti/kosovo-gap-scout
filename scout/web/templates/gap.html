@@ -23,7 +23,7 @@
 <h2>Proven model</h2>
 <div class="card"><strong>{{ model.name }}</strong> — {{ model.description }}
   <div class="muted">markets: {{ model.markets | join(', ') }}</div>
-  {% for u in model.source_urls %}<div>{% if u.startswith('http://') or u.startswith('https://') %}<a href="{{ u }}" rel="noopener noreferrer" target="_blank">{{ u }}</a>{% else %}{{ u }}{% endif %}</div>{% endfor %}
+  {% for u in model.source_urls if u is string %}{% set t = u | trim %}<div>{% if (t | lower).startswith('http://') or (t | lower).startswith('https://') %}<a href="{{ t }}" rel="noopener noreferrer" target="_blank">{{ t }}</a>{% else %}{{ u }}{% endif %}</div>{% endfor %}
 </div>
 {% endif %}
 <h2>Field checks</h2>
