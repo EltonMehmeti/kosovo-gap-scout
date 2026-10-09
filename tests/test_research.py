@@ -62,7 +62,7 @@ def test_worker_runs_to_end_turn_and_records_each_message():
     names = [t.name for t in kw["tools"] if hasattr(t, "name")]
     assert names[0] == "kb_search" and len(names) == 11
     # per request at most PER_REQUEST_MAX_SEARCHES; the task total (12) is enforced across requests
-    assert {"type": "web_search_20260209", "name": "web_search", "max_uses": 4} in kw["tools"]
+    assert {"type": "web_search_20250305", "name": "web_search", "max_uses": 4} in kw["tools"]
     assert kw["cache_control"] == {"type": "ephemeral"}  # caches the growing history (I1)
     assert kw["messages"] == [{"role": "user", "content": "brief"}]
 
