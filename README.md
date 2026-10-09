@@ -23,7 +23,15 @@ Spec: docs/superpowers/specs/2026-10-09-kosovo-gap-scout-design.md
 ## Deployment (Render cron + Neon)
 - Blueprint: `render.yaml` (cron `0 6 * * *`, `uv run scout run`).
 - Secrets live only in Render env vars and `.env` (never committed).
-- First-run ritual: `scout init-db`, `scout seed`, `scout run --budget 1.00`, read `scout brief`.
+- Database setup runs **from your machine**, not on Render (there is no pre-deploy migration step): put the
+  Neon `DATABASE_URL` in your local `.env`, then run `uv run scout init-db` and `uv run scout seed`. Re-run
+  `init-db` locally after pulling a new migration.
+- Hand runs (Phase 0, until 2026-10-18): press **Trigger Run** on the `scout-daily` cron job in the Render
+  dashboard, or run `uv run scout run --budget 1.00` locally against Neon; then read `scout brief`.
+- Budget: `render.yaml` starts at `SCOUT_DAILY_BUDGET_EUR=1.00`; raise it to `3.00` in the Render dashboard on
+  2026-10-19 when Foundation starts.
 - Daily: read the brief (10 min). Sunday: `scout field-check answer <id> "<text>"` for each open check.
 - Phase changes: `scout set-phase verification` (2026-11-16), `scout set-phase maintenance` (2026-12-14).
+  A phase set with `scout set-phase` is stored in the database and overrides the `SCOUT_PHASE` env var
+  (only `scout run --phase` takes precedence over it).
 - Source notes: record here any live deviation found by `tests/test_live.py` (Places region code, Play chart HTML).
