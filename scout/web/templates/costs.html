@@ -11,6 +11,8 @@
   <label for="eur">Cap for today (€0–{{ max_cap }}, blank clears)</label>
   <input id="eur" name="eur" inputmode="decimal" size="6" value="{{ founder_cap if founder_cap is not none else '' }}">
   <button class="primary">Set</button>
+  <span class="muted">Applies to runs started today. The daily run starts at
+    07:00 Kosovo time in winter (08:00 in summer), so setting it after the morning run only affects a manual run.</span>
 </form>
 <h2>This month by model</h2>
 <table>

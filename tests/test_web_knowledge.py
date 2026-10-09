@@ -63,6 +63,8 @@ def test_costs_page_and_cap(web, db_session):
     )
     r = web.get("/costs")
     assert "claude-sonnet-5-5" in r.text and "0.42" in r.text
+    assert "Applies to runs started today" in r.text
+    assert "07:00 Kosovo time in winter" in r.text and "manual run" in r.text
     ok = web.post("/costs/cap", data={"eur": "1.75"})
     assert ok.status_code == 200 and "1.75" in ok.text
     db_session.expire_all()
