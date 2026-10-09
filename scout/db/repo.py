@@ -721,3 +721,14 @@ def answer_field_check(
     fc.status = "answered"
     fc.answered_at = answered_at
     session.commit()
+
+
+def set_gap_test_plan(session: Session, gap_id: int, md: str) -> None:
+    gap = session.get(Gap, gap_id)
+    if gap is not None:
+        gap.test_plan_md = md
+        session.commit()
+
+
+def runs_on_day(session: Session, day: date) -> list[Run]:
+    return list(session.scalars(select(Run).where(Run.day == day).order_by(Run.id)))
