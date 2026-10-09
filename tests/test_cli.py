@@ -28,6 +28,7 @@ def test_cli_seed_add_task_and_status(db_session):
     assert repo.queued_tasks(db_session)[0].payload == {
         "sector": "pets",
         "sector_name": "Pets (vets, sitting, supplies)",
+        "founder": True,
     }
     assert runner.invoke(cli.app, ["add-task", "bogus"]).exit_code != 0
     status = runner.invoke(cli.app, ["status"])

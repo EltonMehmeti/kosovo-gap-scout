@@ -35,7 +35,8 @@ REVIEW_EST = Decimal("0.10")
 REVIEW_SYSTEM = (
     "You review the day's research plan for Kosovo Gap Scout. You may DROP tasks that duplicate "
     "recent work (see the journal) or REORDER them so the most decision-relevant run first. You may "
-    "not add tasks. Keep every task unless you have a concrete reason."
+    "not add tasks. Keep every task unless you have a concrete reason. Never drop a task whose "
+    "payload has founder=true: the founder queued it on purpose."
 )
 
 
@@ -82,7 +83,7 @@ def review_plan(llm: LLM, tasks: list, *, journal_md: str) -> tuple[list, list[s
     dropped_ids = set()
     for d in review.dropped:
         t = by_id.get(d.task_id)
-        if t is None:
+        if t is None or (t.payload or {}).get("founder"):  # founder-queued tasks always run
             continue
         dropped_ids.add(t.id)
         t.status = "skipped"

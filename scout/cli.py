@@ -155,6 +155,7 @@ def add_task(
             payload = {"gap_id": gap.id, "gap_title": gap.title, "sector": sec.slug if sec else ""}
         if theme:
             payload = {"theme": theme, "theme_name": theme.replace("-", " ")}
+        payload["founder"] = True  # the director review never drops a task the founder queued
         est = PROFILES[profile].est_cost_eur if profile in PROFILES else Decimal("0.05")
         t = repo.enqueue_task(
             s, profile=profile, payload=payload, priority=priority, est_cost_eur=est

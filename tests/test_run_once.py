@@ -689,3 +689,39 @@ def test_sigterm_mid_run_closes_the_run_failed(world, settings, monkeypatch):
 )
 def test_field_check_line_parse_tolerates_markdown(line, question):
     assert R.parse_field_check(line) == question
+
+
+def test_review_plan_never_drops_a_founder_task(world, settings):
+    # Live run 2026-10-09: the review dropped a re-queue the founder made with `scout add-task`
+    # because the journal already listed that sector as done.
+    s = world["factory"]()
+    run = repo.start_run(
+        s, day=MONDAY, phase="foundation", budget_cap_eur=Decimal("3"), started_at=NOW
+    )
+    t1 = repo.enqueue_task(
+        s,
+        profile="map-sector",
+        payload={"sector": "pets", "founder": True},
+        priority=95,
+        run_id=run.id,
+    )
+    t2 = repo.enqueue_task(s, profile="news-scan", payload={}, priority=60, run_id=run.id)
+    review = S.DirectorReview(
+        keep_task_ids_in_order=[t2.id],
+        dropped=[S.DroppedTask(task_id=t1.id, reason="journal says done")],
+        note="",
+    )
+    from scout.budget.guard import BudgetGuard
+    from scout.llm.gateway import LLM
+
+    llm = LLM(
+        FakeClient([FakeMessage(content=[text_block("{}")], parsed_output=review)]),
+        BudgetGuard(s, day=MONDAY, daily_cap_eur=Decimal("3"), run_id=run.id),
+        Decimal("0.92"),
+    )
+    kept, notes = R.review_plan(llm, [t1, t2], journal_md="")
+    s.expire_all()
+    assert {t.id for t in kept} == {t1.id, t2.id}
+    assert s.get(repo.Task, t1.id).status == "queued"
+    assert not any("dropped" in n for n in notes)
+    s.close()
