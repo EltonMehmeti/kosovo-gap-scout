@@ -1,6 +1,10 @@
-# Kosovo Gap Scout
+<img src="docs/brand/outlier-icon.svg" alt="" width="64" height="64">
 
-Daily AI research engine that looks for business models proven elsewhere and missing in Kosovo.
+# Outlier
+
+*Spot the one that doesn't fit yet.*
+
+Formerly Kosovo Gap Scout. Daily AI research engine that looks for business models proven elsewhere and missing in Kosovo.
 Spec: docs/superpowers/specs/2026-10-09-kosovo-gap-scout-design.md
 
 ## Local setup
@@ -59,3 +63,12 @@ Every button goes through `scout/founder.py` and is journaled, and the CLI uses 
   "Kill" and "Park" stick until you press "Reopen": the scout never re-scores or revives a gap you
   parked or killed.
 - Today's cap (Costs page or `scout set-cap 1.50`) replaces the phase cap for that Kosovo day only.
+
+## Brand
+
+Name: **Outlier**. The mark is a grid of dots (every business model already in Kosovo) with one dot jumped out of its slot (the model working elsewhere and missing here).
+
+- Files: `docs/brand/outlier-icon.svg` (app icon), `docs/brand/outlier-mark.svg` (mark on light backgrounds), `scout/web/static/favicon.svg` (favicon and dashboard mark).
+- Colors: electric blue `#2D3CFF`, ink `#0D1033`, signal yellow `#FFE14D`.
+- Wordmark: lowercase "outlier" in Space Grotesk Bold, tight tracking.
+- The CLI command, package and repo keep the `scout` name for now.

@@ -4,7 +4,7 @@
 {% block title %}Log in{% endblock %}
 {% block content %}
 <div class="card auth-card">
-  <div class="brand">{{ ui.icon("target") }}<span>Gap Scout</span></div>
+  <div class="brand"><img class="mark" src="/static/favicon.svg?v={{ ASSET_VERSION }}" alt="" width="22" height="22"><span>Outlier</span></div>
   <p class="muted">Your daily scout for business gaps in Kosovo.</p>
   <form method="post" action="/login" class="form-stack">
     <label for="token">Dashboard token</label>
