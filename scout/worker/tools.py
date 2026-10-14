@@ -13,6 +13,7 @@ from anthropic import beta_tool
 from sqlalchemy.orm import Session
 
 from scout.db import repo
+from scout.db.models import Gap
 from scout.db.repo import CostRecord, FactIn
 from scout.sources import apple, play, social
 from scout.sources.apify import ADS_ACTOR, INSTAGRAM_ACTOR, ApifyClient, ad_library_url
@@ -115,6 +116,8 @@ class ToolContext:
     social_calls: dict[str, int] = field(default_factory=dict)
     social_ok: int = 0
     crawl_pages: int = 0
+    presence_short_refused: bool = False
+    duplicate_warned: set[str] = field(default_factory=set)
 
 
 def _clip(text: str, limit: int) -> str:
@@ -265,11 +268,22 @@ def _presence_check(
         "social_searches": social,
         "app_store_searches": ctx.app_store_searches,
     }
-    if (
-        local < MIN_LOCAL_SEARCHES
-        or social < MIN_SOCIAL_SEARCHES
-        or ctx.app_store_searches < MIN_APP_STORE_SEARCHES
-    ):
+    social_sites = "site:instagram.com, site:facebook.com or site:tiktok.com"
+    missing = {
+        f"local searches (places_search, or web_search with {social_sites})": MIN_LOCAL_SEARCHES
+        - local,
+        f"social searches (web_search with {social_sites})": MIN_SOCIAL_SEARCHES - social,
+        "app_store_search calls": MIN_APP_STORE_SEARCHES - ctx.app_store_searches,
+    }
+    missing = {k: n for k, n in missing.items() if n > 0}
+    if missing and not ctx.presence_short_refused and ctx.search_note is None:
+        ctx.presence_short_refused = True
+        need = "; ".join(f"{n} more {k}" for k, n in missing.items())
+        return (
+            f"not saved yet: the presence-check protocol still needs {need}. Run them, then "
+            "record the check again. If you cannot, record it again and it is stored as unknown."
+        )
+    if missing:
         value["degraded"] = True
         value["claimed_verdict"] = claimed
         verdict = "unknown"
@@ -353,6 +367,30 @@ def kb_record_proven_model_impl(
     return f"proven model '{pm.slug}' saved (markets: {len(pm.markets)}, nearby markets: {pm.nearby_count})"
 
 
+_TITLE_STOPWORDS = {
+    *("kosovo", "kosova", "with", "from", "for", "and", "the", "app", "platform", "tool"),
+    *("marketplace", "booking", "online", "verified", "review", "reviews", "service", "services"),
+}
+DUPLICATE_OVERLAP = 0.6
+
+
+def _title_words(title: str) -> set[str]:
+    words = {w for w in re.findall(r"[^\W\d_]+", title.lower()) if len(w) >= 3}
+    return {w[:-1] if len(w) > 4 and w.endswith("s") else w for w in words - _TITLE_STOPWORDS}
+
+
+def _similar_gap(ctx: ToolContext, title: str) -> Gap | None:
+    words = _title_words(title)
+    if not words:
+        return None
+    for g in repo.list_gaps(ctx.session, statuses=["candidate", "verifying", "verified", "parked"]):
+        other = _title_words(g.title)
+        shared = len(words & other)
+        if shared >= 2 and shared / min(len(words), len(other)) >= DUPLICATE_OVERLAP:
+            return g
+    return None
+
+
 def kb_propose_gap_impl(
     ctx: ToolContext,
     title: str,
@@ -368,6 +406,17 @@ def kb_propose_gap_impl(
         return "error: title and sector are required"
     if err := _unknown_sector(ctx, sector):
         return err
+    key = title.strip().lower()
+    is_new = repo.get_gap_by_title(ctx.session, sector.strip(), title) is None
+    if is_new and key not in ctx.duplicate_warned and (similar := _similar_gap(ctx, title)):
+        ctx.duplicate_warned.add(key)
+        slug = ctx.session.get(repo.Sector, similar.sector_id).slug
+        return (
+            f"not saved: this looks like gap #{similar.id} \"{similar.title}\" (sector `{slug}`, "
+            f"status {similar.status}). If it is the same idea, call kb_propose_gap with exactly that "
+            "title and sector to update it. If it is really a different idea, call again with the "
+            "same arguments and it is created."
+        )
     gap, created = repo.propose_gap(
         ctx.session,
         title=_fit(title, W_TITLE),

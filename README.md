@@ -32,7 +32,7 @@ Spec: docs/superpowers/specs/2026-10-09-kosovo-gap-scout-design.md
   env vars live in Render; local ones in `.env` (never committed).
 - Social eyes (optional, free): create a free Apify account (email only, no card), copy the API token
   from Apify Console → Settings → Integrations, and add it as the repo secret `APIFY_TOKEN`. The scout
-  then checks Instagram shops and Meta ads for gaps scoring 60+ and runs a Monday ads sweep. It stops at
+  then checks Instagram shops and Meta ads for gaps scoring 40+ and runs a Monday ads sweep. It stops at
   `$4.50` of the ~$5 monthly free credit (repo variable `SCOUT_APIFY_MONTHLY_USD`). Without the token
   it runs as before. Kosovo sites (Merrjep, KosovaJob, news) are read with Crawl4AI in the workflow.
 - Database setup runs **from your machine** (there is no migration step in the workflow): put the

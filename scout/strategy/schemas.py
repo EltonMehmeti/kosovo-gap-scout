@@ -80,6 +80,7 @@ class CriticOutput(_Strict):
 
 class DroppedTask(_Strict):
     task_id: int
+    kind: Literal["duplicate", "budget", "other"]
     reason: str
 
 

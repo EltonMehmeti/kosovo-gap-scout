@@ -425,6 +425,9 @@ def test_presence_check_after_full_protocol_is_stored_with_counts_and_pinned_ttl
 def test_partial_protocol_degrades_to_unknown_and_does_not_lift_the_cap(ctx):
     gap = _verify_ctx(ctx)
     _searches(ctx, places=2, apps=1)
+    first = _presence_fact(ctx, gap, verdict="absent", confidence=0.9)
+    assert first.startswith("not saved yet") and "5 more local searches" in first
+    assert _presence_facts(ctx, gap) == []
     assert _presence_fact(ctx, gap, verdict="absent", confidence=0.9).startswith("fact #")
     (fact,) = _presence_facts(ctx, gap)
     assert fact.value["verdict"] == "unknown" and fact.value["degraded"] is True
@@ -441,12 +444,14 @@ def test_failed_places_calls_do_not_count_as_searches(ctx):
     T.app_store_search_impl(ctx, term="x")
     assert ctx.places_searches == 0 and ctx.app_store_searches == 2  # apple + play
     _presence_fact(ctx, gap)
+    _presence_fact(ctx, gap)
     assert _presence_facts(ctx, gap)[0].value["verdict"] == "unknown"
 
 
 def test_invalid_verdict_is_stored_as_unknown(ctx):
     gap = _verify_ctx(ctx)
     _searches(ctx)
+    ctx.social_searches = 2
     _presence_fact(ctx, gap, verdict="totally absent!!")
     assert _presence_facts(ctx, gap)[0].value["verdict"] == "unknown"
 

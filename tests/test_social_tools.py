@@ -89,16 +89,16 @@ def test_instagram_search_records_shops_fact_and_free_credit_cost(db_session, ga
     assert ctx.social_ok == 1
 
 
-def test_score_below_60_is_refused_without_a_call(db_session, gap):
-    gap.score_total = 40
+def test_score_below_40_is_refused_without_a_call(db_session, gap):
+    gap.score_total = 30
     db_session.commit()
     fake = FakeApify(PROFILES)
     out = T.instagram_search_impl(_ctx(db_session, gap=gap, apify=fake), query="torta")
     assert out.startswith("paid social checks run only") and fake.calls == []
 
 
-def test_flagged_gap_below_60_is_allowed(db_session, gap):
-    gap.score_total = 40
+def test_flagged_gap_below_40_is_allowed(db_session, gap):
+    gap.score_total = 30
     repo.set_setting(db_session, "flagged_gaps", [gap.id])
     db_session.commit()
     fake = FakeApify(PROFILES)

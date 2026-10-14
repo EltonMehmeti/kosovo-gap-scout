@@ -39,9 +39,9 @@ REVIEW_SYSTEM = (
     "You review the day's research plan for Outliner. You may DROP tasks that duplicate "
     "recent work (see the journal) or REORDER them so the most decision-relevant run first. You may "
     "not add tasks. Keep every task unless you have a concrete reason. Never drop a task whose "
-    "payload has founder=true: the founder queued it on purpose. The budget field is today's real "
-    "cap and what is left of it; caps named in the journal may be out of date. The system already "
-    "stops work at the cap, so never drop a task for budget while the plan's estimates fit it."
+    "payload has founder=true: the founder queued it on purpose. Never drop a task for budget: the "
+    "system runs tasks in your order and stops at the cap itself. Set kind to duplicate, budget or "
+    "other; budget drops are ignored."
 )
 
 
@@ -93,7 +93,7 @@ def review_plan(llm: LLM, tasks: list, *, journal_md: str) -> tuple[list, list[s
     dropped_ids = set()
     for d in review.dropped:
         t = by_id.get(d.task_id)
-        if t is None or (t.payload or {}).get("founder"):  # founder-queued tasks always run
+        if t is None or (t.payload or {}).get("founder") or d.kind == "budget":
             continue
         dropped_ids.add(t.id)
         t.status = "skipped"

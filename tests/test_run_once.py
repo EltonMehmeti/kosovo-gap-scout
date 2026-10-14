@@ -213,7 +213,7 @@ def test_review_plan_drops_and_reorders(world, settings):
     t3 = repo.enqueue_task(s, profile="news-scan", payload={}, priority=60, run_id=run.id)
     review = S.DirectorReview(
         keep_task_ids_in_order=[t3.id, t1.id],
-        dropped=[S.DroppedTask(task_id=t2.id, reason="dup")],
+        dropped=[S.DroppedTask(task_id=t2.id, kind="duplicate", reason="dup")],
         note="news first",
     )
     from scout.budget.guard import BudgetGuard
@@ -708,7 +708,7 @@ def test_review_plan_never_drops_a_founder_task(world, settings):
     t2 = repo.enqueue_task(s, profile="news-scan", payload={}, priority=60, run_id=run.id)
     review = S.DirectorReview(
         keep_task_ids_in_order=[t2.id],
-        dropped=[S.DroppedTask(task_id=t1.id, reason="journal says done")],
+        dropped=[S.DroppedTask(task_id=t1.id, kind="duplicate", reason="journal says done")],
         note="",
     )
     from scout.budget.guard import BudgetGuard

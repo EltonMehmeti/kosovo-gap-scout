@@ -72,6 +72,7 @@ def test_answer_field_check(db_session, gap):
     assert done.status != "open" and done.answer == "None in Prizren"
     task = repo.queued_tasks(db_session)[0]
     assert task.profile == "verify-gap" and task.priority == 90 and task.payload["gap_id"] == gap.id
+    assert task.payload["founder"] is True
     with pytest.raises(FounderError, match="no open field check"):
         founder.answer_field_check(db_session, fc.id, "again", today=TODAY, now=NOW)
 

@@ -13,7 +13,7 @@ from scout.db import repo
 from scout.db.repo import CostRecord
 from scout.sources.apify import ActorResult, ApifyError
 
-SCORE_GATE = 60
+SCORE_GATE = 40
 ADS_SWEEP_PROFILE = "ads-sweep"
 SWEEP_ADS_CALLS = 3  # the Ad Library returns no ads without a keyword: one call per sweep keyword
 CACHE_DAYS = {"instagram": 30, "ads": 14}
@@ -52,8 +52,8 @@ def _gate(ctx, source: str) -> str | None:
     if qualifies(ctx):
         return None
     return (
-        "paid social checks run only while checking a gap that scores 60 or more (or that the "
-        "founder flagged) — use web_search with site:instagram.com instead"
+        f"paid social checks run only while checking a gap that scores {SCORE_GATE} or more (or that "
+        "the founder flagged) — use web_search with site:instagram.com instead"
     )
 
 

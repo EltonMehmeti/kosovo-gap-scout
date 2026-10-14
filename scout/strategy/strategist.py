@@ -42,7 +42,8 @@ Rules:
   filter — otherwise "parked".
 - A field check is a question the founder can answer in three minutes by phone or by walking into a shop in
   Prishtina, Prizren, Pejë, Gjakovë, Mitrovicë, Ferizaj or Gjilan. Propose one only when it would change the
-  score or the confidence materially.
+  score or the confidence materially. It must cost nothing: never ask the founder to buy ads, pay for a
+  test or post publicly. One question, not a list of checks.
 - Propose new gaps only when the facts show a proven model with no sign of a Kosovo equivalent; one line of
   hypothesis each, sector slug from the taxonomy in the input.
 - Be concrete and short. Reasoning ≤ 80 words per gap.
@@ -56,6 +57,8 @@ a bank's app, Gjirafa, Wolt, a telecom), regulation, or a market too small for t
 For each gap give the strongest objection, the Kosovo-specific killer, your own risk_penalty (0–15) and
 confidence (0–1), and a decision: proceed, needs_field_check (with the question), park or kill.
 Decide "kill" only if the objection is close to certain; otherwise "park" or "needs_field_check".
+A field-check question is one question the founder can answer in three minutes by phone or a shop visit, at
+no cost: never ask the founder to buy ads, pay for a test or post publicly.
 """
 
 

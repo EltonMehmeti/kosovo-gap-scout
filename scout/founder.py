@@ -147,7 +147,12 @@ def answer_field_check(
             profile="verify-gap",
             priority=90,
             est_cost_eur=PROFILES["verify-gap"].est_cost_eur,
-            payload={"gap_id": gap.id, "gap_title": gap.title, "sector": sec.slug if sec else ""},
+            payload={
+                "gap_id": gap.id,
+                "gap_title": gap.title,
+                "sector": sec.slug if sec else "",
+                "founder": True,
+            },
         )
     journal(session, today=today, line=f"answered field check #{fc.id}: {fc.question} → {answer}")
     return fc

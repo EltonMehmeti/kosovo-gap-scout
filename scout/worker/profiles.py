@@ -118,7 +118,7 @@ Run the presence-check protocol completely — this is the anti-hallucination ru
    the words and page names local sellers use. Then, if these tools are offered: one instagram_search with
    the best keyword, one ad_library_search with the words a seller would put in an ad, and
    kosovo_site_crawl on Merrjep or KosovaJob pages with listings or prices. Paid social tools may refuse
-   (score below 60, credit used up): then carry on without them. Ads (above all ones running 30+ days and
+   (score below 40, credit used up): then carry on without them. Ads (above all ones running 30+ days and
    foreign sellers shipping into Kosovo) and comment questions about price or delivery are demand
    evidence; the tools save them for this gap.
 5. Save every player found with kb_record_business (kind local or foreign).
@@ -139,7 +139,7 @@ Run the presence-check protocol completely — this is the anti-hallucination ru
 8. Call kb_propose_gap with the same title "{gap_title}", sector `{sector}`, presence_level set to the
    verdict, and the updated hypothesis and why_not_yet — this updates the existing gap.
 If the verdict is ambiguous, include one line "field-check: <a question the founder can answer in three
-minutes by phone or by visiting>" in your summary.
+minutes by phone or by visiting, at no cost>" in your summary.
 
 Known facts about this gap:
 {gaps_md}
