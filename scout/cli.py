@@ -19,7 +19,7 @@ from scout.director.run import run_once
 from scout.founder import FounderError
 from scout.seeds import seed_all
 
-app = typer.Typer(help="Outlier: daily scout for business gaps in Kosovo", no_args_is_help=True)
+app = typer.Typer(help="Outliner: daily scout for business gaps in Kosovo", no_args_is_help=True)
 field_check_app = typer.Typer(help="Founder field checks")
 app.add_typer(field_check_app, name="field-check")
 console = Console()

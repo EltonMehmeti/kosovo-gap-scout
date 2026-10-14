@@ -1,4 +1,4 @@
-/* Outlier dashboard: small progressive enhancements. Every page also works without this file. */
+/* Outliner dashboard: small progressive enhancements. Every page also works without this file. */
 (function () {
   "use strict";
   document.documentElement.classList.add("js");

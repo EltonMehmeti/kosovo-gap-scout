@@ -29,7 +29,7 @@ LOCKED = (
 
 
 def create_app(settings: Settings, session_factory) -> FastAPI:
-    app = FastAPI(title="Outlier", docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="Outliner", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings = settings
     app.state.session_factory = session_factory
 

@@ -1,4 +1,4 @@
-# Design brief: Kosovo Gap Scout dashboard
+# Design brief: Outliner dashboard
 
 Paste this whole file into Claude Design. The repo is public: https://github.com/EltonMehmeti/kosovo-gap-scout. The live dashboard is https://scout-dashboard-bmoz.onrender.com (it needs the dashboard token to log in).
 

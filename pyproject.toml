@@ -1,5 +1,5 @@
 [project]
-name = "kosovo-gap-scout"
+name = "outliner"
 version = "0.1.0"
 description = "Daily AI scout that finds proven business models missing in Kosovo"
 requires-python = ">=3.12"

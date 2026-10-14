@@ -21,7 +21,7 @@ def client():
 def test_prompt_cache_hits_on_second_call(client):
     from scout.budget.pricing import usage_units
 
-    filler = "Kosovo Gap Scout rules. " * 400  # ≈ 2k tokens, above the minimum cacheable prefix
+    filler = "Outliner rules. " * 400  # ≈ 2k tokens, above the minimum cacheable prefix
     system = [{"type": "text", "text": filler, "cache_control": {"type": "ephemeral"}}]
     kwargs = dict(
         model="claude-haiku-5-5",

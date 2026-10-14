@@ -13,7 +13,7 @@ from string import Formatter
 
 from scout.db import repo
 
-WORKER_RULES = """You are the research worker of Kosovo Gap Scout, a daily engine whose only goal is to find
+WORKER_RULES = """You are the research worker of Outliner, a daily engine whose only goal is to find
 business models that are proven in other countries (ideally the neighbours: Albania, North Macedonia,
 Montenegro, Bosnia, Serbia, Croatia, Slovenia) but missing or badly served in Kosovo, so a solo founder
 based in Prishtina (software engineer, 5–10 hours a week, ≤ €2,000 budget, consumer products, software only,

@@ -1,3 +1,3 @@
-"""Outlier (formerly Kosovo Gap Scout)."""
+"""Outliner (formerly Outlier and Kosovo Gap Scout)."""
 
 __version__ = "0.1.0"

@@ -36,7 +36,7 @@ from scout.worker.tools import ToolContext
 
 REVIEW_EST = Decimal("0.10")
 REVIEW_SYSTEM = (
-    "You review the day's research plan for Kosovo Gap Scout. You may DROP tasks that duplicate "
+    "You review the day's research plan for Outliner. You may DROP tasks that duplicate "
     "recent work (see the journal) or REORDER them so the most decision-relevant run first. You may "
     "not add tasks. Keep every task unless you have a concrete reason. Never drop a task whose "
     "payload has founder=true: the founder queued it on purpose. The budget field is today's real "

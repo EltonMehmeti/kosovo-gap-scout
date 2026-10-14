@@ -23,7 +23,7 @@ ALLOWED_DOMAINS = (
 SOURCE_BY_DOMAIN = {"merrjep.com": "merrjep", "kosovajob.com": "kosovajob"}
 DEFAULT_SOURCE = "kosovo-sites"
 MIN_INTERVAL_S = 2.0
-USER_AGENT = "KosovoGapScout/1.0 (+https://github.com/EltonMehmeti/kosovo-gap-scout)"
+USER_AGENT = "Outliner/1.0 (+https://github.com/EltonMehmeti/kosovo-gap-scout)"
 
 
 class CrawlRefused(RuntimeError):

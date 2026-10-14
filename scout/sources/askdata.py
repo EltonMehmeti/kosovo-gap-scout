@@ -9,7 +9,7 @@ from urllib.parse import quote
 import httpx
 
 DEFAULT_BASE_URL = "https://askdata.rks-gov.net/api/v1/en/ASKdata"
-USER_AGENT = "kosovo-gap-scout/0.1 (+research; contact via GitHub)"
+USER_AGENT = "outliner/0.1 (+research; contact via GitHub)"
 
 
 @dataclass
