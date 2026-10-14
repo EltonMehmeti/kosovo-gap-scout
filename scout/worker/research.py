@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
@@ -25,6 +26,7 @@ PER_ITERATION_EST_EUR: dict[str, Decimal] = {
 STEP_GROWTH = Decimal("1.25")
 PER_REQUEST_MAX_SEARCHES = 4
 CACHE_CONTROL = {"type": "ephemeral"}  # top-level automatic caching: the growing history is cached
+SOCIAL_SITE = re.compile(r"site:\s*(?:www\.)?(?:instagram|facebook|tiktok)\.com", re.IGNORECASE)
 
 
 @dataclass
@@ -102,6 +104,21 @@ class ResearchWorker:
                 total += cost
                 step_est = max(base_est, cost * STEP_GROWTH)
                 searches += usage_units(message.usage)["web_search_requests"]
+                social_ids = {
+                    getattr(b, "id", None)
+                    for b in message.content
+                    if getattr(b, "type", None) == "server_tool_use"
+                    and getattr(b, "name", None) == "web_search"
+                    and SOCIAL_SITE.search(str((getattr(b, "input", None) or {}).get("query", "")))
+                }
+                ctx.social_searches += sum(
+                    1
+                    for b in message.content
+                    if getattr(b, "type", None) == "web_search_tool_result"
+                    and getattr(b, "tool_use_id", None) in social_ids
+                    and isinstance(getattr(b, "content", None), list)
+                    and b.content
+                )
                 if message.stop_reason == "max_tokens":
                     truncated = True
                 # Mirror the history: the runner keeps its own copy and does not expose it.

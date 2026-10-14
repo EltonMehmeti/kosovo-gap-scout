@@ -53,10 +53,12 @@ PRESENCE_LEVELS = (
 DIGEST_PREFIXES = ("sector:", "culture:", "country")
 # Presence-check provenance (spec B8, review I4): the fact that lifts the rubric's absence/confidence cap may
 # only be written by a verify-gap task, for its own gap, after real searches ran in that same task. Below
-# these minimums (one Places search per city, one app-store search) the verdict is stored as "unknown".
+# these minimums (seven local searches — Places or social — of which two social, one app-store search) the
+# verdict is stored as "unknown".
 PRESENCE_CHECK_PROFILE = "verify-gap"
 PRESENCE_CHECK_TTL_DAYS = 60
-MIN_PLACES_SEARCHES = 7
+MIN_LOCAL_SEARCHES = 7
+MIN_SOCIAL_SEARCHES = 2
 MIN_APP_STORE_SEARCHES = 1
 DEGRADED_CHECK_MAX_CONFIDENCE = 0.5
 KB_RESULT_LIMIT = 2000
@@ -80,7 +82,7 @@ SOCIAL_TOOL_NAMES = ("instagram_search", "ad_library_search")
 CRAWL_TOOL_NAMES = ("kosovo_site_crawl",)
 MAX_INSTAGRAM_ACCOUNTS = 30
 MAX_ADS = 50
-SWEEP_MAX_ADS = 300
+SWEEP_MAX_ADS = 100
 SWEEP_RESULT_LIMIT = 12000
 MAX_CRAWL_PAGES = 20
 
@@ -102,6 +104,7 @@ class ToolContext:
     payload: dict = field(default_factory=dict)  # the task's payload (gap_id for verify-gap)
     places_searches: int = 0  # Places searches that actually returned in this task
     app_store_searches: int = 0  # app-store searches that actually returned in this task
+    social_searches: int = 0  # site:instagram/facebook/tiktok web searches that returned results
     touched_gap_ids: set[int] = field(default_factory=set)  # gaps proposed/updated or written about
     search_note: str | None = (
         None  # set by the worker when the task's web-search allowance is used up
@@ -179,7 +182,7 @@ def kb_search_impl(ctx: ToolContext, query: str, sector: str = "") -> str:
         if f.source_url:
             line += f" <{f.source_url}>"
         lines.append(line)
-    return _clip("\n".join(lines) or "no facts yet", KB_RESULT_LIMIT)
+    return _clip("\n".join(lines) or "no matching facts", KB_RESULT_LIMIT)
 
 
 def kb_record_fact_impl(
@@ -247,16 +250,26 @@ def _presence_check(
     gap_id = ctx.payload.get("gap_id")
     if entity_key != f"gap:{gap_id}":
         return f"error: this task may only record the presence check for 'gap:{gap_id}'"
-    if ctx.places_searches + ctx.app_store_searches == 0:
-        return "error: run places_search and app_store_search first (presence-check protocol)"
+    social = ctx.social_searches + ctx.social_ok
+    local = ctx.places_searches + social
+    if local + ctx.app_store_searches == 0:
+        return (
+            "error: run places_search or social web searches, and app_store_search, first "
+            "(presence-check protocol)"
+        )
     value = dict(value or {})
     claimed = value.get("verdict")
     verdict = claimed if claimed in PRESENCE_LEVELS else "unknown"
     value["protocol"] = {
         "places_searches": ctx.places_searches,
+        "social_searches": social,
         "app_store_searches": ctx.app_store_searches,
     }
-    if ctx.places_searches < MIN_PLACES_SEARCHES or ctx.app_store_searches < MIN_APP_STORE_SEARCHES:
+    if (
+        local < MIN_LOCAL_SEARCHES
+        or social < MIN_SOCIAL_SEARCHES
+        or ctx.app_store_searches < MIN_APP_STORE_SEARCHES
+    ):
         value["degraded"] = True
         value["claimed_verdict"] = claimed
         verdict = "unknown"
@@ -396,10 +409,14 @@ def places_search_impl(ctx: ToolContext, query: str, city: str = "", language: s
     try:
         result = ctx.places.text_search(q, language=language or "sq")
         ctx.places_searches += 1
+    except Exception:
+        repo.mark_source(ctx.session, "google-places", ok=False, now=ctx.now)
+        raise
     finally:  # a failed request may still have been billed
         ctx.guard.record(
             CostRecord("places", "google", None, {"calls": 1}, Decimal("0"), task_id=ctx.task_id)
         )
+    repo.mark_source(ctx.session, "google-places", ok=True, now=ctx.now)
     lines = [f"{result.count} places for {q!r}"]
     lines += [
         f"- {p.name} | {p.address} | {p.primary_type or '-'} | {p.business_status or '-'}"
@@ -414,9 +431,11 @@ def app_store_search_impl(ctx: ToolContext, term: str, store: str = "both") -> s
         try:
             hits = ctx.apple_search(term, country="xk", limit=8)
             ctx.app_store_searches += 1
+            repo.mark_source(ctx.session, "itunes-search", ok=True, now=ctx.now)
             lines.append(f"apple: {len(hits)} results")
             lines += [f"- [apple] {h.name} — {h.publisher} <{h.url}>" for h in hits]
         except Exception as e:  # noqa: BLE001 — a dead source must not kill the task
+            repo.mark_source(ctx.session, "itunes-search", ok=False, now=ctx.now)
             lines.append(f"apple: error {type(e).__name__}")
     if store in ("play", "both"):
         try:
@@ -458,6 +477,7 @@ def askdata_fetch_impl(ctx: ToolContext, path: str, selections_json: str) -> str
     if not isinstance(selections, dict):
         return "error: selections_json must be a JSON object of variable code -> list of values"
     data = ctx.askdata.fetch(path, {k: [str(x) for x in v] for k, v in selections.items()})
+    repo.mark_source(ctx.session, "askdata", ok=True, now=ctx.now)
     lines = [" | ".join(data.columns)]
     lines += [
         " | ".join([*map(str, r.get("key", [])), *map(str, r.get("values", []))])
@@ -528,7 +548,7 @@ def ad_library_search_impl(ctx: ToolContext, query: str = "") -> str:
         return "ad_library_search unavailable (no APIFY_TOKEN configured) — use web_search instead"
     sweep = ctx.profile == social_guard.ADS_SWEEP_PROFILE
     query = query.strip()
-    if not query and not sweep:
+    if not query:
         return "error: query is empty"
     limit = SWEEP_MAX_ADS if sweep else MAX_ADS
     actor_input = {

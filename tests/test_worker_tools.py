@@ -188,7 +188,9 @@ def test_build_tools_names_and_schemas(ctx):
     schema = next(t for t in tools if t.name == "kb_record_fact").to_dict()["input_schema"]
     assert set(schema["required"]) >= {"claim", "entity_type", "entity_key", "confidence"}
     assert (
-        tools[0].call({"query": "pet", "sector": "pets"}).startswith(("DIGEST", "no facts", "- ["))
+        tools[0]
+        .call({"query": "pet", "sector": "pets"})
+        .startswith(("DIGEST", "no matching facts", "- ["))
     )
     assert len(ctx.events) == 1 and ctx.events[0]["tool"] == "kb_search"
 
@@ -273,7 +275,7 @@ def test_db_error_in_a_tool_rolls_back_so_cost_records_still_work(ctx, monkeypat
         CostRecord("llm", "anthropic", "claude-sonnet-5-5", {}, Decimal("0.02"), task_id=None)
     )
     assert repo.spent_on(ctx.session, DAY) == Decimal("0.020000")
-    assert T.kb_search_impl(ctx, query="pets") == "no facts yet"
+    assert T.kb_search_impl(ctx, query="pets") == "no matching facts"
 
 
 def test_model_strings_are_fitted_to_column_widths(ctx):
@@ -333,7 +335,7 @@ def test_unknown_sector_slugs_are_rejected_with_the_valid_list(ctx):
         assert "pets" in out
     assert ctx.session.scalar(select(func.count()).select_from(Sector)) == before
     # empty sector stays optional where it was optional
-    assert T.kb_search_impl(ctx, query="x") == "no facts yet"
+    assert T.kb_search_impl(ctx, query="x") == "no matching facts"
 
 
 # ---------- I4: presence-check provenance ----------
@@ -406,10 +408,15 @@ def test_presence_check_rejected_without_any_search_in_this_task(ctx):
 def test_presence_check_after_full_protocol_is_stored_with_counts_and_pinned_ttl(ctx):
     gap = _verify_ctx(ctx)
     _searches(ctx, places=7, apps=1)
+    ctx.social_searches = 2
     assert _presence_fact(ctx, gap, ttl_days=365).startswith("fact #")
     (fact,) = _presence_facts(ctx, gap)
     assert fact.value["verdict"] == "absent" and not fact.value.get("degraded")
-    assert fact.value["protocol"] == {"places_searches": 7, "app_store_searches": 2}
+    assert fact.value["protocol"] == {
+        "places_searches": 7,
+        "social_searches": 2,
+        "app_store_searches": 2,
+    }
     assert fact.confidence == 0.8 and (fact.expires_at - fact.observed_at).days == 60
     assert repo.has_presence_check(ctx.session, gap, now=NOW)
     assert repo.latest_presence_check(ctx.session, gap, now=NOW).id == fact.id

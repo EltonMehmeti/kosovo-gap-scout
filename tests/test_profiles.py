@@ -27,7 +27,7 @@ def test_profiles_match_spec_table():
         Decimal("0.35"),
     )
     vg = P.PROFILES["verify-gap"]
-    assert (vg.max_searches, vg.max_fetches, vg.est_cost_eur) == (10, 6, Decimal("0.40"))
+    assert (vg.max_searches, vg.max_fetches, vg.est_cost_eur) == (14, 6, Decimal("0.40"))
     ns = P.PROFILES["news-scan"]
     assert (ns.max_searches, ns.max_fetches, ns.max_iterations, ns.est_cost_eur) == (
         4,
@@ -129,7 +129,7 @@ def test_research_turns_have_room_to_think_search_and_save():
 
 def test_ads_sweep_profile_and_verify_social_step():
     sweep = P.build_brief(P.PROFILES["ads-sweep"], {}, date(2026, 10, 19))
-    assert "ad_library_search once with an empty query" in sweep
+    assert "ad_library_search three times" in sweep
     assert '{"advertisers": n' in sweep
     verify = P.build_brief(
         P.PROFILES["verify-gap"],

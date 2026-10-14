@@ -38,6 +38,7 @@ PHASE_RULES: dict[str, dict] = {
 MAX_FLAGGED_VERIFY_PER_DAY = 1
 MAP_STALE_DAYS = 14
 HUNT_STALE_DAYS = 21
+VERIFY_COOLDOWN_DAYS = 7
 CHART_DIFF_EST = Decimal("0.05")
 MAX_OPEN_FIELD_CHECKS = 5
 PRIORITY = {
@@ -86,6 +87,7 @@ class PlannerState:
     deep_dive_done_this_month: bool = False
     done_today: set[tuple[str, str]] = field(default_factory=set)
     social_enabled: bool = False
+    recently_verified_gap_ids: set[int] = field(default_factory=set)
 
 
 @dataclass
@@ -112,7 +114,9 @@ def _verify_candidates(state: PlannerState) -> list[GapInfo]:
     needs = [
         g
         for g in live
-        if g.id not in state.flagged_gap_ids and (not g.has_fresh_check or g.confidence < 0.6)
+        if g.id not in state.flagged_gap_ids
+        and g.id not in state.recently_verified_gap_ids
+        and (not g.has_fresh_check or g.confidence < 0.6)
     ]
     if state.open_field_checks >= MAX_OPEN_FIELD_CHECKS:
         # the founder has enough homework: prefer gaps whose check is already done
@@ -261,6 +265,9 @@ def load_state(
         for t in repo.tasks_for_run(session, run_id):
             done_today.add(_key(t.profile, t.payload or {}))
     first = today.replace(day=1)
+    recently_verified = repo.verified_gap_ids_since(
+        session, now - timedelta(days=VERIFY_COOLDOWN_DAYS)
+    )
     deep_done = any(
         t.profile == "deep-dive" and t.status == "done"
         for rid in run_ids_today
@@ -278,4 +285,5 @@ def load_state(
         deep_dive_done_this_month=deep_done,
         done_today=done_today,
         social_enabled=social_enabled,
+        recently_verified_gap_ids=recently_verified,
     )

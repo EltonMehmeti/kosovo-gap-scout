@@ -163,7 +163,7 @@ def test_failed_run_records_its_cost_and_makes_the_presence_check_partial(db_ses
     assert T.instagram_search_impl(ctx, query="torta") == "social source unavailable: run failed"
     assert [c.units["usd"] for c in _apify_costs(db_session)] == ["0.02"]
     assert db_session.query(Source).filter_by(name="apify-instagram").one().failure_count == 1
-    ctx.places_searches, ctx.app_store_searches = 7, 1
+    ctx.places_searches, ctx.app_store_searches, ctx.social_searches = 7, 1, 2
     T.kb_record_fact_impl(
         ctx,
         claim="presence check: absent",
@@ -180,7 +180,7 @@ def test_failed_run_records_its_cost_and_makes_the_presence_check_partial(db_ses
 def test_presence_check_is_not_partial_after_a_social_result(db_session, gap):
     ctx = _ctx(db_session, gap=gap, apify=FakeApify(PROFILES))
     T.instagram_search_impl(ctx, query="torta")
-    ctx.places_searches, ctx.app_store_searches = 7, 1
+    ctx.places_searches, ctx.app_store_searches, ctx.social_searches = 7, 1, 2
     T.kb_record_fact_impl(
         ctx,
         claim="presence check: instagram-only",
@@ -210,13 +210,14 @@ def test_oversized_results_are_cut_to_the_limit(db_session, gap):
     assert db_session.query(Ad).count() == 50
 
 
-def test_ads_sweep_gets_300_ads_and_no_instagram(db_session):
+def test_ads_sweep_gets_100_ads_per_keyword_and_no_instagram(db_session):
     seed_all(db_session)
     fake = FakeApify(ADS)
     ctx = _ctx(db_session, profile="ads-sweep", apify=fake)
     assert T.instagram_search_impl(ctx, query="torta").startswith("error: the weekly ads sweep")
-    out = T.ad_library_search_impl(ctx, query="")
-    assert out.startswith("3 Meta ads") and fake.calls[0][2] == 300
+    assert T.ad_library_search_impl(ctx, query="") == "error: query is empty"
+    out = T.ad_library_search_impl(ctx, query="porosit")
+    assert out.startswith("3 Meta ads") and fake.calls[0][2] == 100
     assert db_session.query(Ad).filter(Ad.gap_id.is_(None)).count() == 3
     assert db_session.query(Fact).filter_by(entity_type="ad_signal").count() == 0
 
@@ -251,8 +252,10 @@ def test_tools_are_offered_only_when_configured(db_session, gap):
 def test_ads_sweep_skips_the_cache_and_lists_advertisers(db_session):
     seed_all(db_session)
     fake = FakeApify([ADS[0] | {"adArchiveID": str(n)} for n in range(5)])
-    T.ad_library_search_impl(_ctx(db_session, profile="ads-sweep", apify=fake), query="")
-    out = T.ad_library_search_impl(_ctx(db_session, profile="ads-sweep", apify=fake), query="")
+    T.ad_library_search_impl(_ctx(db_session, profile="ads-sweep", apify=fake), query="porosit")
+    out = T.ad_library_search_impl(
+        _ctx(db_session, profile="ads-sweep", apify=fake), query="porosit"
+    )
     assert len(fake.calls) == 2
     assert out.splitlines()[1].startswith("- Torta Shop | 5 ads |")
 

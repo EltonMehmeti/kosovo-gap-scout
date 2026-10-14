@@ -1,7 +1,7 @@
 # Daily scout run on GitHub Actions (free for public repos). Replaces the paid Render cron.
 # Secrets: ANTHROPIC_API_KEY, DATABASE_URL (required); GOOGLE_PLACES_API_KEY, APIFY_TOKEN (optional).
 # Variables (optional, Settings → Secrets and variables → Actions → Variables):
-#   SCOUT_DAILY_BUDGET_EUR (default 1.00; raise to 3.00 on 2026-10-19), SCOUT_PHASE (default foundation),
+#   SCOUT_DAILY_BUDGET_EUR (default 1.00; the repo variable is 3.00), SCOUT_PHASE (default foundation),
 #   SCOUT_APIFY_MONTHLY_USD (default 4.50).
 name: scout-daily
 

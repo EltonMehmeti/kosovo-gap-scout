@@ -1,4 +1,4 @@
-"""Code-enforced limits on paid social calls (spec §4): the score gate, one call per tool per task, the
+"""Code-enforced limits on paid social calls (spec §4): the score gate, one call per tool per task (three for the ads sweep), the
 monthly Apify credit cap, and a cache that serves repeat queries free."""
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from scout.sources.apify import ActorResult, ApifyError
 
 SCORE_GATE = 60
 ADS_SWEEP_PROFILE = "ads-sweep"
+SWEEP_ADS_CALLS = 3  # the Ad Library returns no ads without a keyword: one call per sweep keyword
 CACHE_DAYS = {"instagram": 30, "ads": 14}
 TOOL_FOR = {"instagram": "instagram_search", "ads": "ad_library_search"}
 SOURCE_NAME = {"instagram": "apify-instagram", "ads": "meta-ad-library"}
@@ -92,8 +93,12 @@ def paid_call(
     if cached is not None:
         ctx.social_ok += 1
         return cached.items
-    if ctx.social_calls.get(source, 0) >= 1:
-        return f"error: one {TOOL_FOR[source]} per task — work with the result you already have"
+    allowed = SWEEP_ADS_CALLS if ctx.profile == ADS_SWEEP_PROFILE and source == "ads" else 1
+    if ctx.social_calls.get(source, 0) >= allowed:
+        return (
+            f"error: {'one' if allowed == 1 else allowed} {TOOL_FOR[source]} call(s) per task — "
+            "work with the results you already have"
+        )
     if credit_used_up(ctx.session, ctx.guard.day, ctx.apify_monthly_usd):
         return f"social source unavailable: {resume_text(ctx.guard.day)}"
     ctx.social_calls[source] = ctx.social_calls.get(source, 0) + 1

@@ -27,8 +27,8 @@ How you work:
   unless the facts are stale or contradictory.
 - Evidence or silence. Every fact carries a source URL and an honest confidence. Do not infer that something
   is absent from Kosovo because you did not find it in one search — say "not found in N searches" and keep
-  the presence level "unknown" unless you ran the full presence check (seven cities, both app stores, four
-  web queries).
+  the presence level "unknown" unless you ran the full presence check (seven cities on Places or social
+  media, both app stores, four web queries).
 - Businesses, not people. Record companies, apps, pages and prices. Never record names, phone numbers or
   posts of private individuals; summarise complaints as patterns ("users complain about X") without quoting
   identifiable people.
@@ -108,7 +108,8 @@ Presence level so far: {presence_level}
 
 Run the presence-check protocol completely — this is the anti-hallucination rule of the whole system:
 1. places_search for the service in each of Prishtinë, Prizren, Pejë, Gjakovë, Mitrovicë, Ferizaj, Gjilan,
-   in Albanian and in English (14 calls). Count real, operating businesses per city.
+   in Albanian and in English (14 calls). Count real, operating businesses per city. If places_search is
+   unavailable, cover the seven cities with the social searches of step 4 instead (one per city).
 2. app_store_search for the service keywords (store "both").
 3. Web: three Albanian queries ("<service> në Kosovë", "<service> Prishtinë", "aplikacion <service>") and one
    English query. Look for digital products, not just listings.
@@ -128,8 +129,9 @@ Run the presence-check protocol completely — this is the anti-hallucination ru
    weak reviews or activity, or social-media-only), prishtina-only, offline-only (businesses exist but no
    digital product), instagram-only (sellers exist only as informal Instagram or Facebook pages, no shop or
    app), decent (≥ 3 active players with digital products), unknown (sources degraded).
-   The system accepts this fact only after your searches in steps 1–2 and stores "unknown" if fewer than
-   seven Places searches or no app-store search actually ran.
+   The system stores "unknown" unless at least seven local searches (places_search, or web_search with
+   site:instagram.com / site:facebook.com / site:tiktok.com), two of them social, and one app-store search
+   actually ran in this task.
 7. Save a payment_path fact with entity_key "gap:{gap_id}" (how a Kosovo customer could pay for this: card
    via local PSP, cash on delivery, bank transfer, in-app via Google/Apple billing) and the strongest
    why-not-yet facts. Make sure the gap's proven model is recorded (kb_record_proven_model) with a source
@@ -216,7 +218,8 @@ ADS_SWEEP_BRIEF = """Date: {today}. Task: WEEKLY ADS SWEEP of the Meta Ad Librar
 Goal: learn which consumer businesses pay to advertise to people in Kosovo this week, and spot foreign
 sellers serving Kosovo with no local equivalent.
 Do, in order:
-1. Call ad_library_search once with an empty query (all ads shown in Kosovo, up to 300). You get one call.
+1. Call ad_library_search three times, once per keyword: "porosit", "dërgesa", "zbritje" (up to 100
+   ads each, all shown in Kosovo). You get three calls; an ad seen twice is the same ad.
 2. Group the ads by sector (use the existing sector slugs; kb_search if unsure). For each sector with
    ads, note how many advertisers there are, which ads run 30+ days (a sign they pay off), and which
    sellers are foreign and ship into Kosovo.
@@ -276,7 +279,7 @@ PROFILES: dict[str, Profile] = {
         "claude-sonnet-5-5",
         Decimal("0.40"),
         18,
-        10,
+        14,
         6,
         16000,
         "medium",

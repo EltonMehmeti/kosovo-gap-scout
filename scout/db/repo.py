@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from scout.db.models import (
@@ -104,6 +104,9 @@ def upsert_fact(session: Session, f: FactIn, *, run_id: int | None, observed_at:
     return fact
 
 
+_SEARCH_STOPWORDS = {"and", "the", "for", "with", "from", "dhe", "për", "nga", "një"}
+
+
 def search_facts(
     session: Session,
     query: str,
@@ -112,15 +115,25 @@ def search_facts(
     limit: int = 20,
     now: datetime,
 ) -> list[Fact]:
-    words = [w for w in re.split(r"\s+", query.strip()) if len(w) >= 3][:6]
+    words = [
+        w
+        for w in re.findall(r"[\w-]+", query)
+        if len(w) >= 3 and w.lower() not in _SEARCH_STOPWORDS
+    ][:6]
     stmt = select(Fact).where(Fact.expires_at > now)
-    for w in words:
-        stmt = stmt.where(or_(Fact.claim.ilike(f"%{w}%"), Fact.entity_key.ilike(f"%{w}%")))
+    order = [Fact.confidence.desc(), Fact.observed_at.desc()]
+    if words:
+        hits = sum(
+            case((or_(Fact.claim.ilike(f"%{w}%"), Fact.entity_key.ilike(f"%{w}%")), 1), else_=0)
+            for w in words
+        )
+        stmt = stmt.where(hits > 0)
+        order.insert(0, hits.desc())
     if sector_slug:
         sector = get_sector(session, sector_slug)
         if sector:
             stmt = stmt.where(Fact.sector_id == sector.id)
-    stmt = stmt.order_by(Fact.confidence.desc(), Fact.observed_at.desc()).limit(limit)
+    stmt = stmt.order_by(*order).limit(limit)
     return list(session.scalars(stmt))
 
 
@@ -523,6 +536,15 @@ def tasks_for_run(session: Session, run_id: int | None) -> list[Task]:
     if run_id is None:
         return []
     return list(session.scalars(select(Task).where(Task.run_id == run_id).order_by(Task.id)))
+
+
+def verified_gap_ids_since(session: Session, since: datetime) -> set[int]:
+    tasks = session.scalars(
+        select(Task).where(
+            Task.profile == "verify-gap", Task.status == "done", Task.finished_at >= since
+        )
+    )
+    return {int(t.payload["gap_id"]) for t in tasks if (t.payload or {}).get("gap_id") is not None}
 
 
 def task_exists_today(

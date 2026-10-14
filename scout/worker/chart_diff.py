@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from scout.db import repo
 from scout.db.repo import ChartEntryIn, FactIn
@@ -42,7 +42,9 @@ def run_chart_diff(
     apple_fetch=apple.fetch_top_free,
     play_fetch=play.fetch_top_free,
     min_neighbours: int = 2,
+    now: datetime | None = None,
 ) -> ChartDiffReport:
+    now = now or datetime.combine(today, datetime.min.time(), tzinfo=UTC)
     report = ChartDiffReport(captured_on=today)
     for store, fetch in (("apple", apple_fetch), ("play", play_fetch)):
         charts: dict[str, list] = {}
@@ -54,6 +56,8 @@ def run_chart_diff(
                 charts[country] = list(seen.values())
             except Exception as e:  # noqa: BLE001 — one dead storefront must not stop the others
                 report.errors.append(f"{store}/{country}: {type(e).__name__}: {e}")
+        source = "apple-rss" if store == "apple" else "google-play"
+        repo.mark_source(session, source, ok=bool(charts), now=now)
         for country, entries in charts.items():
             report.snapshots_saved += repo.save_chart_snapshot(
                 session,

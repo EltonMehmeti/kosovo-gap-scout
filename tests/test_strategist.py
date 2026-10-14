@@ -565,6 +565,9 @@ def test_changes_today_unions_fact_sectors_gap_keyed_facts_and_touched_gaps(db_s
     g_home, _ = repo.propose_gap(db_session, title="Cleaners", sector_slug="home-services")
     g_wed, _ = repo.propose_gap(db_session, title="Venues", sector_slug="weddings")
     repo.propose_gap(db_session, title="Tutors", sector_slug="tutoring")  # untouched
+    for g in repo.list_gaps(db_session):
+        g.score_components = {"proof": 1}
+    g_new, _ = repo.propose_gap(db_session, title="Pet sitters", sector_slug="pets")
     facts = [
         _fact(db_session, "pets fact", sector="pets"),
         _fact(db_session, "about cleaners", key=f"gap:{g_home.id}", etype="gap"),
@@ -572,7 +575,7 @@ def test_changes_today_unions_fact_sectors_gap_keyed_facts_and_touched_gaps(db_s
     ]
     sectors, gap_ids = changes_today(db_session, facts, {g_wed.id})
     assert sectors == ["home-services", "pets", "weddings"]
-    assert gap_ids == {g_home.id, g_wed.id}
+    assert gap_ids == {g_home.id, g_wed.id, g_new.id}
     assert changes_today(db_session, [_fact(db_session, "country only")], set()) == ([], set())
 
 

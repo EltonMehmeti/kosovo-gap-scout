@@ -39,7 +39,9 @@ REVIEW_SYSTEM = (
     "You review the day's research plan for Kosovo Gap Scout. You may DROP tasks that duplicate "
     "recent work (see the journal) or REORDER them so the most decision-relevant run first. You may "
     "not add tasks. Keep every task unless you have a concrete reason. Never drop a task whose "
-    "payload has founder=true: the founder queued it on purpose."
+    "payload has founder=true: the founder queued it on purpose. The budget field is today's real "
+    "cap and what is left of it; caps named in the journal may be out of date. The system already "
+    "stops work at the cap, so never drop a task for budget while the plan's estimates fit it."
 )
 
 
@@ -70,6 +72,11 @@ def review_plan(llm: LLM, tasks: list, *, journal_md: str) -> tuple[list, list[s
             for t in tasks
         ],
         "journal": journal_md,
+        "budget": {
+            "cap_eur": str(llm.guard.cap),
+            "remaining_eur": str(llm.guard.remaining()),
+            "plan_est_eur": str(sum((t.est_cost_eur for t in tasks), Decimal("0"))),
+        },
     }
     res = llm.parse(
         model="claude-opus-5-5",
@@ -394,7 +401,11 @@ def _run_body(
                 if task.profile == "chart-diff":
                     spent_before = guard.spent()
                     chart_report = run_chart_diff(
-                        session, today, apple_fetch=apple_fetch, play_fetch=play_fetch
+                        session,
+                        today,
+                        apple_fetch=apple_fetch,
+                        play_fetch=play_fetch,
+                        now=clock(),
                     )
                     n = classify_and_record(
                         session, extractor, chart_report, now=clock(), run_id=run.id
@@ -580,8 +591,9 @@ def _run_body(
         "field_checks_answered": session.query(repo.FieldCheck)
         .filter_by(status="answered")
         .count(),
-        "days_run": session.query(repo.Run.day).filter(repo.Run.status == "done").distinct().count()
-        + 1,
+        "days_run": len(
+            {d for (d,) in session.query(repo.Run.day).filter(repo.Run.status == "done")} | {today}
+        ),
     }
     repo.save_scorecard(session, day=today, metrics=metrics)
     repo.finish_run(

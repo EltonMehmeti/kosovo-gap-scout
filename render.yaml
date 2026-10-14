@@ -23,8 +23,8 @@ envVarGroups:
       - key: SCOUT_PHASE
         value: foundation
       # Shown on the dashboard as today's limit. Keep it equal to the GitHub repo variable
-      # SCOUT_DAILY_BUDGET_EUR that the daily run uses (raise both to "3.00" on 2026-10-19).
+      # SCOUT_DAILY_BUDGET_EUR that the daily run uses.
       - key: SCOUT_DAILY_BUDGET_EUR
-        value: "1.00"
+        value: "3.00"
       - key: SCOUT_TIMEZONE
         value: Europe/Belgrade

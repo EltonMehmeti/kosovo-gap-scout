@@ -95,14 +95,21 @@ def strategist_max_tokens(n_gaps: int) -> int:
 def changes_today(session, facts, touched_gap_ids) -> tuple[list[str], set[int]]:
     """Spec B2.4/B7 scope: sectors whose facts or gaps changed in this run, and the gaps touched.
 
-    Sectors come from the fresh facts' sectors, the gaps those facts are about ("gap:<id>" keys) and the
-    gaps the workers proposed or updated (ToolContext.touched_gap_ids)."""
+    Sectors come from the fresh facts' sectors, the gaps those facts are about ("gap:<id>" keys), the
+    gaps the workers proposed or updated (ToolContext.touched_gap_ids) and, when anything changed, live gaps
+    never scored yet."""
     gap_ids = set(touched_gap_ids)
     for f in facts:
         key = f.entity_key or ""
         if key.startswith("gap:") and key[4:].isdigit():
             gap_ids.add(int(key[4:]))
     sector_ids = {f.sector_id for f in facts if f.sector_id}
+    if gap_ids or sector_ids:
+        gap_ids |= {
+            g.id
+            for g in repo.list_gaps(session, statuses=["candidate", "verifying", "verified"])
+            if g.score_components is None
+        }
     live: set[int] = set()
     for gid in gap_ids:
         gap = repo.get_gap(session, gid)
